@@ -70,11 +70,11 @@ export function getTierForCategory(channelId: string, hasHeavyContext = false): 
   return hasHeavyContext ? 'medium' : 'low';
 }
 
-const KEYS = [
-  'AIzaSyAB7Oo-9hLWm3KNeZa1YY45u73NVMe9y6o',
-  'AIzaSyDlWNGsxNJIf9Nah9KnJFKKtIt51YT5d_g',
-  'AIzaSyDngLdZ_k7Qyigd2hDdX3fqs00AcITsDGA',
-];
+const KEYS = (import.meta.env.VITE_GEMINI_API_KEYS || '')
+  .split(',')
+  .map(k => k.trim())
+  .filter(Boolean);
+
 
 let keyIndex = 0;
 const quotaCooldowns = new Map<string, number>();
