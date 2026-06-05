@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>비 오는 밤, 한 잔의 온도 - 브로맨툰 샘플</title>
+  <style>
+    :root { color-scheme: light; --ink:#111827; --muted:#64748b; --rose:#ff5a66; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:#f4f6fa; color:var(--ink); }
+    header { position:sticky; top:0; z-index:10; background:rgba(255,255,255,.92); backdrop-filter: blur(10px); border-bottom:1px solid #e5e7eb; padding:16px 22px; }
+    h1 { margin:0; font-size:24px; letter-spacing:0; }
+    header p { margin:6px 0 0; color:var(--muted); font-size:14px; }
+    main { max-width:980px; margin:0 auto; padding:24px 16px 64px; display:grid; gap:28px; }
+    .meta { background:#fff; border:1px solid #e5e7eb; border-radius:14px; padding:16px; display:grid; gap:10px; }
+    .meta h2 { margin:0; font-size:16px; }
+    .meta ul { margin:0; padding-left:18px; color:#334155; }
+    .page { background:#fff; border:1px solid #e5e7eb; border-radius:18px; padding:14px; box-shadow:0 10px 30px rgba(15,23,42,.06); }
+    .page-head { display:flex; justify-content:space-between; gap:12px; align-items:center; padding:4px 4px 12px; }
+    .page-head strong { font-size:16px; }
+    .page-head span { color:var(--muted); font-size:12px; text-align:right; }
+    .comic { position:relative; width:min(100%, 620px); margin:0 auto; overflow:hidden; border-radius:12px; background:#e5e7eb; border:1px solid #dbe2ea; }
+    .comic img { display:block; width:100%; aspect-ratio:2/3; object-fit:cover; }
+    .bubble { position:absolute; transform:translate(-50%, -50%); max-width:42%; min-width:110px; padding:11px 14px; background:#fff; border:3px solid #111827; border-radius:999px; box-shadow:0 4px 0 rgba(17,24,39,.16); font-weight:800; font-size:14px; line-height:1.35; text-align:center; }
+    .bubble::after { content:""; position:absolute; left:50%; bottom:-13px; width:18px; height:18px; background:#fff; border-right:3px solid #111827; border-bottom:3px solid #111827; transform:translateX(-50%) rotate(45deg); }
+    .bubble b { display:block; font-size:10px; color:var(--rose); margin-bottom:2px; }
+    .thought { border-radius:28px; border-style:dashed; }
+    .thought::before { content:""; position:absolute; right:18px; bottom:-18px; width:12px; height:12px; background:#fff; border:3px solid #111827; border-radius:50%; }
+    .thought::after { right:5px; left:auto; bottom:-30px; width:8px; height:8px; border:3px solid #111827; border-radius:50%; transform:none; }
+    .shout { border-radius:12px; background:#fff7ed; clip-path: polygon(5% 15%, 15% 5%, 28% 12%, 42% 2%, 52% 13%, 67% 5%, 80% 16%, 94% 12%, 88% 31%, 98% 44%, 86% 58%, 96% 77%, 76% 76%, 66% 96%, 51% 83%, 35% 96%, 28% 80%, 8% 86%, 14% 64%, 2% 50%, 12% 35%); }
+    .narration { border-radius:8px; background:#111827; color:#fff; border-color:#111827; box-shadow:none; max-width:55%; }
+    .narration::after { display:none; }
+    @media (max-width: 720px) {
+      header { padding:14px 16px; }
+      h1 { font-size:20px; }
+      main { padding:16px 10px 48px; }
+      .page { border-radius:12px; padding:8px; }
+      .page-head { display:block; }
+      .page-head span { display:block; margin-top:4px; text-align:left; }
+      .bubble { font-size:12px; min-width:84px; max-width:50%; padding:8px 10px; border-width:2px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>비 오는 밤, 한 잔의 온도</h1>
+    <p>비 오는 밤의 작은 카페에서, 말보다 먼저 서로의 빈 컵을 알아보는 두 사람의 첫 번째 에피소드.</p>
+  </header>
+  <main>
+    <section class="meta">
+      <h2>캐릭터</h2>
+      <ul><li><b>서윤</b> 주인공 · soft black wavy hair, calm eyes, cream knit cardigan, quiet cafe owner, gentle expression</li><li><b>도하</b> 상대역 · dark brown short hair, sharp but tired eyes, navy coat, travel photographer, reserved expression</li></ul>
+    </section>
+    
+      <section class="page">
+        <div class="page-head">
+          <strong>1. 닫힌 시간의 카페</strong>
+          <span>ComfyUI / 3컷 / wide rainy street establishing panel, diagonal split close-up, small inset reaction panel</span>
+        </div>
+        <div class="comic">
+          <img src="page-01-dongjeon_bromantoon_demo_00001_.png" alt="닫힌 시간의 카페" />
+          
+      <div class="bubble" style="left:33%;top:22%;">
+        <b>서윤</b>
+        <span>마감했는데... 많이 젖으셨네요.</span>
+      </div>
+      <div class="bubble" style="left:63%;top:48%;">
+        <b>도하</b>
+        <span>비가 갑자기 세져서요. 잠깐만 있어도 될까요?</span>
+      </div>
+      <div class="bubble" style="left:38%;top:78%;">
+        <b>서윤</b>
+        <span>따뜻한 거 한 잔 드릴게요.</span>
+      </div>
+        </div>
+      </section>
+      <section class="page">
+        <div class="page-head">
+          <strong>2. 말보다 먼저 놓인 컵</strong>
+          <span>ComfyUI / 4컷 / top horizontal panel, two middle vertical panels, bottom emotional close-up panel</span>
+        </div>
+        <div class="comic">
+          <img src="page-02-dongjeon_bromantoon_demo_00002_.png" alt="말보다 먼저 놓인 컵" />
+          
+      <div class="bubble" style="left:65%;top:19%;">
+        <b>도하</b>
+        <span>이 집 커피는 처음인데 향이 좋네요.</span>
+      </div>
+      <div class="bubble" style="left:30%;top:43%;">
+        <b>서윤</b>
+        <span>오늘처럼 추운 날엔 조금 진하게 내려요.</span>
+      </div>
+      <div class="bubble thought" style="left:70%;top:66%;">
+        <b>도하</b>
+        <span>...기억해둘게요.</span>
+      </div>
+      <div class="bubble narration" style="left:45%;top:88%;">
+        
+        <span>낯선 사람의 목소리가 이상하게 오래 남았다.</span>
+      </div>
+        </div>
+      </section>
+      <section class="page">
+        <div class="page-head">
+          <strong>3. 다시 올 이유</strong>
+          <span>ComfyUI / 3컷 / large emotional close-up, narrow side panel, wide ending panel with rain stopping</span>
+        </div>
+        <div class="comic">
+          <img src="page-03-dongjeon_bromantoon_demo_00003_.png" alt="다시 올 이유" />
+          
+      <div class="bubble" style="left:57%;top:28%;">
+        <b>도하</b>
+        <span>다음엔 손님으로 올게요. 비 때문 말고.</span>
+      </div>
+      <div class="bubble" style="left:36%;top:56%;">
+        <b>서윤</b>
+        <span>그럼 그땐 문 열어둘게요.</span>
+      </div>
+      <div class="bubble narration" style="left:45%;top:84%;">
+        
+        <span>비가 그친 뒤에도, 카페 안은 조금 더 따뜻했다.</span>
+      </div>
+        </div>
+      </section>
+  </main>
+</body>
+</html>

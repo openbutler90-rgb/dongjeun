@@ -1,0 +1,250 @@
+{
+  "title": "비 오는 밤, 한 잔의 온도",
+  "logline": "비 오는 밤의 작은 카페에서, 말보다 먼저 서로의 빈 컵을 알아보는 두 사람의 첫 번째 에피소드.",
+  "characters": [
+    {
+      "name": "서윤",
+      "role": "주인공",
+      "visual": "soft black wavy hair, calm eyes, cream knit cardigan, quiet cafe owner, gentle expression"
+    },
+    {
+      "name": "도하",
+      "role": "상대역",
+      "visual": "dark brown short hair, sharp but tired eyes, navy coat, travel photographer, reserved expression"
+    }
+  ],
+  "pages": [
+    {
+      "title": "닫힌 시간의 카페",
+      "panelCount": 3,
+      "panelLayout": "wide rainy street establishing panel, diagonal split close-up, small inset reaction panel",
+      "effects": [
+        "rain streaks",
+        "warm window glow",
+        "soft screentone"
+      ],
+      "prompt": "vertical Korean romance webtoon page, 3 panels, rainy night cafe exterior, warm cozy interior light, two young Korean men, one cafe owner behind counter, one photographer entering with wet coat, clean white gutters, empty speech bubbles, empty narration boxes, cinematic manhwa, no readable text",
+      "lines": [
+        {
+          "speaker": "서윤",
+          "text": "마감했는데... 많이 젖으셨네요.",
+          "type": "normal",
+          "x": 33,
+          "y": 22
+        },
+        {
+          "speaker": "도하",
+          "text": "비가 갑자기 세져서요. 잠깐만 있어도 될까요?",
+          "type": "normal",
+          "x": 63,
+          "y": 48
+        },
+        {
+          "speaker": "서윤",
+          "text": "따뜻한 거 한 잔 드릴게요.",
+          "type": "normal",
+          "x": 38,
+          "y": 78
+        }
+      ]
+    },
+    {
+      "title": "말보다 먼저 놓인 컵",
+      "panelCount": 4,
+      "panelLayout": "top horizontal panel, two middle vertical panels, bottom emotional close-up panel",
+      "effects": [
+        "steam from coffee",
+        "sparkle overlay",
+        "soft focus background"
+      ],
+      "prompt": "vertical Korean romance webtoon page, 4 panels, cozy cafe counter, steaming coffee cup, subtle hand close-up, two young Korean men avoiding eye contact but smiling slightly, warm amber lighting, empty speech bubbles, empty narration boxes, clean white gutters, no readable text",
+      "lines": [
+        {
+          "speaker": "도하",
+          "text": "이 집 커피는 처음인데 향이 좋네요.",
+          "type": "normal",
+          "x": 65,
+          "y": 19
+        },
+        {
+          "speaker": "서윤",
+          "text": "오늘처럼 추운 날엔 조금 진하게 내려요.",
+          "type": "normal",
+          "x": 30,
+          "y": 43
+        },
+        {
+          "speaker": "도하",
+          "text": "...기억해둘게요.",
+          "type": "thought",
+          "x": 70,
+          "y": 66
+        },
+        {
+          "speaker": "나레이션",
+          "text": "낯선 사람의 목소리가 이상하게 오래 남았다.",
+          "type": "narration",
+          "x": 45,
+          "y": 88
+        }
+      ]
+    },
+    {
+      "title": "다시 올 이유",
+      "panelCount": 3,
+      "panelLayout": "large emotional close-up, narrow side panel, wide ending panel with rain stopping",
+      "effects": [
+        "gentle emotional aura",
+        "rain stopping",
+        "light bloom"
+      ],
+      "prompt": "vertical Korean romance webtoon page, 3 panels, rain stopping outside cafe, photographer looking at cafe owner, cafe owner smiling softly, quiet romantic tension, empty speech bubbles and empty narration boxes, elegant manhwa composition, no readable text",
+      "lines": [
+        {
+          "speaker": "도하",
+          "text": "다음엔 손님으로 올게요. 비 때문 말고.",
+          "type": "normal",
+          "x": 57,
+          "y": 28
+        },
+        {
+          "speaker": "서윤",
+          "text": "그럼 그땐 문 열어둘게요.",
+          "type": "normal",
+          "x": 36,
+          "y": 56
+        },
+        {
+          "speaker": "나레이션",
+          "text": "비가 그친 뒤에도, 카페 안은 조금 더 따뜻했다.",
+          "type": "narration",
+          "x": 45,
+          "y": 84
+        }
+      ]
+    }
+  ],
+  "renderedPages": [
+    {
+      "page": {
+        "title": "닫힌 시간의 카페",
+        "panelCount": 3,
+        "panelLayout": "wide rainy street establishing panel, diagonal split close-up, small inset reaction panel",
+        "effects": [
+          "rain streaks",
+          "warm window glow",
+          "soft screentone"
+        ],
+        "prompt": "vertical Korean romance webtoon page, 3 panels, rainy night cafe exterior, warm cozy interior light, two young Korean men, one cafe owner behind counter, one photographer entering with wet coat, clean white gutters, empty speech bubbles, empty narration boxes, cinematic manhwa, no readable text",
+        "lines": [
+          {
+            "speaker": "서윤",
+            "text": "마감했는데... 많이 젖으셨네요.",
+            "type": "normal",
+            "x": 33,
+            "y": 22
+          },
+          {
+            "speaker": "도하",
+            "text": "비가 갑자기 세져서요. 잠깐만 있어도 될까요?",
+            "type": "normal",
+            "x": 63,
+            "y": 48
+          },
+          {
+            "speaker": "서윤",
+            "text": "따뜻한 거 한 잔 드릴게요.",
+            "type": "normal",
+            "x": 38,
+            "y": 78
+          }
+        ]
+      },
+      "imageUrl": "page-01-dongjeon_bromantoon_demo_00001_.png",
+      "imageSource": "ComfyUI"
+    },
+    {
+      "page": {
+        "title": "말보다 먼저 놓인 컵",
+        "panelCount": 4,
+        "panelLayout": "top horizontal panel, two middle vertical panels, bottom emotional close-up panel",
+        "effects": [
+          "steam from coffee",
+          "sparkle overlay",
+          "soft focus background"
+        ],
+        "prompt": "vertical Korean romance webtoon page, 4 panels, cozy cafe counter, steaming coffee cup, subtle hand close-up, two young Korean men avoiding eye contact but smiling slightly, warm amber lighting, empty speech bubbles, empty narration boxes, clean white gutters, no readable text",
+        "lines": [
+          {
+            "speaker": "도하",
+            "text": "이 집 커피는 처음인데 향이 좋네요.",
+            "type": "normal",
+            "x": 65,
+            "y": 19
+          },
+          {
+            "speaker": "서윤",
+            "text": "오늘처럼 추운 날엔 조금 진하게 내려요.",
+            "type": "normal",
+            "x": 30,
+            "y": 43
+          },
+          {
+            "speaker": "도하",
+            "text": "...기억해둘게요.",
+            "type": "thought",
+            "x": 70,
+            "y": 66
+          },
+          {
+            "speaker": "나레이션",
+            "text": "낯선 사람의 목소리가 이상하게 오래 남았다.",
+            "type": "narration",
+            "x": 45,
+            "y": 88
+          }
+        ]
+      },
+      "imageUrl": "page-02-dongjeon_bromantoon_demo_00002_.png",
+      "imageSource": "ComfyUI"
+    },
+    {
+      "page": {
+        "title": "다시 올 이유",
+        "panelCount": 3,
+        "panelLayout": "large emotional close-up, narrow side panel, wide ending panel with rain stopping",
+        "effects": [
+          "gentle emotional aura",
+          "rain stopping",
+          "light bloom"
+        ],
+        "prompt": "vertical Korean romance webtoon page, 3 panels, rain stopping outside cafe, photographer looking at cafe owner, cafe owner smiling softly, quiet romantic tension, empty speech bubbles and empty narration boxes, elegant manhwa composition, no readable text",
+        "lines": [
+          {
+            "speaker": "도하",
+            "text": "다음엔 손님으로 올게요. 비 때문 말고.",
+            "type": "normal",
+            "x": 57,
+            "y": 28
+          },
+          {
+            "speaker": "서윤",
+            "text": "그럼 그땐 문 열어둘게요.",
+            "type": "normal",
+            "x": 36,
+            "y": 56
+          },
+          {
+            "speaker": "나레이션",
+            "text": "비가 그친 뒤에도, 카페 안은 조금 더 따뜻했다.",
+            "type": "narration",
+            "x": 45,
+            "y": 84
+          }
+        ]
+      },
+      "imageUrl": "page-03-dongjeon_bromantoon_demo_00003_.png",
+      "imageSource": "ComfyUI"
+    }
+  ]
+}

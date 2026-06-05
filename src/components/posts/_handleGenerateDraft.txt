@@ -1,0 +1,45 @@
+    const handleGenerateDraft = async () => {
+    if (!canGenerateDraft) {
+      alert('제목, 장소, 링크, 사진 중 하나는 먼저 넣어주세요.');
+      return;
+    }
+    setIsAiDrafting(true);
+    try {
+      const sourceLinks = Array.from(new Set([
+        ...extractUrls(title),
+        ...extractUrls(locationName),
+        ...extractUrls(mapUrl),
+        ...extractUrls(content),
+      ])).slice(0, 8);
+
+      const result = await generatePostDraft({
+        channelId,
+        title: title.trim() || locationName.trim() || sourceLinks[0] || '',
+        locationName: locationName.trim(),
+        region,
+        currentContent: content.trim(),
+        imageUrls,
+        sourceLinks,
+      });
+
+      // ✅ 결과 분해해서 적용 (draft는 string이 아닌 PostDraftResult 객체)
+      if (result?.content) {
+        setContent(result.content);
+        if (result.title && !title.trim()) setTitle(result.title.slice(0, 100));
+        if (result.locationName && !locationName.trim()) setLocationName(result.locationName);
+        if (result.mapUrl && !mapUrl.trim()) setMapUrl(result.mapUrl);
+        if (result.region && !region) setRegion(result.region);
+        // 이미지: 링크에서 수집한 이미지 추가 (최대 5장)
+        if (result.imageUrls?.length > 0) {
+          setImageUrls(prev => [...new Set([...prev, ...result.imageUrls])].slice(0, 5));
+        }
+        setActiveTab('write');
+      } else {
+        alert('AI 집사가 초안을 만들지 못했어요. 제목, 장소, 또는 링크를 조금 더 추가해주세요.');
+      }
+    } catch (err: any) {
+      alert(`초안 생성 실패: ${err.message || '잠시 후 다시 시도해주세요.'}`);
+    } finally {
+      setIsAiDrafting(false);
+    }
+  };

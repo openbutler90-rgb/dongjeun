@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ff5c5c" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="동전커피" />
+
+    <!-- ✅ SEO -->
+    <meta name="description" content="20~30대 청년 커플 모임 커뮤니티 동전커피 — 데이트코스, 맛집, 핫플레이스를 함께 공유해요" />
+    <meta name="keywords" content="동전커피, 모임, 커뮤니티, 데이트코스, 맛집, 핫플레이스, 청년모임" />
+
+    <!-- ✅ OGP (카카오톡/디스코드/슬랙 미리보기) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="동전커피" />
+    <meta property="og:title" content="동전커피 — 20~30대 청년 커플 모임 커뮤니티" />
+    <meta property="og:description" content="데이트코스, 맛집, 핫플레이스를 함께 공유하는 우리만의 공간. 가입신청 후 정모와 번개에 참여해보세요!" />
+    <meta property="og:image" content="/logo.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="/" />
+    <meta property="og:locale" content="ko_KR" />
+
+    <!-- ✅ Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="동전커피 — 20~30대 청년 커플 모임 커뮤니티" />
+    <meta name="twitter:description" content="데이트코스, 맛집, 핫플레이스를 함께 공유하는 우리만의 공간" />
+    <meta name="twitter:image" content="/logo.png" />
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/app-icon-192.png" type="image/png" />
+    <title>동전커피</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // ✅ Electron에서는 OneSignal 제외, 일반 브라우저에서만 로드
+      const isElectron = navigator.userAgent.includes('Electron');
+      if (!isElectron) {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js';
+        script.defer = true;
+        document.head.appendChild(script);
+
+        window.OneSignalDeferred = window.OneSignalDeferred || [];
+        OneSignalDeferred.push(async function(OneSignal) {
+          await OneSignal.init({
+            appId: 'YOUR_ONESIGNAL_APP_ID',
+            notifyButton: { enable: false },
+            welcomeNotification: { disabled: true },
+          });
+          console.log('[OneSignal] Init complete');
+          // ✅ 자동 권한 요청 제거: 사용자가 직접 버튼을 눌러야만 요청 (400 Bad Request 방지)
+        });
+      } else {
+        console.log('[OneSignal] Skipped in Electron');
+      }
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

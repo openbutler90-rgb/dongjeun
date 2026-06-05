@@ -1,0 +1,1090 @@
+import { useEffect, useState, useRef } from 'react';
+import { collection, query, where, onSnapshot, orderBy, Timestamp, doc, deleteDoc, updateDoc, getDoc, serverTimestamp, addDoc, increment, writeBatch, runTransaction, getDocs, documentId } from 'firebase/firestore';
+import { db, handleFirestoreError, OperationType, auth } from '../../lib/firebase';
+import { generateReply } from '../../lib/gemini';
+import { firstUsableImageUrl, getCategoryFallbackImage, isDirectImageUrl } from '../../lib/placeTools';
+import { useAuthStore } from '../../stores/authStore';
+import { useNavigate } from 'react-router';
+import { extractUrls, LinkPreviewCard } from '../common/LinkPreviewCard';
+import { useVisualViewportInset } from '../../hooks/useVisualViewportInset';
+import { useToastStore } from '../../stores/toastStore';
+import { formatDistanceToNow } from 'date-fns';
+import { ko } from 'date-fns/locale';
+import { WritePostModal } from './WritePostModal';
+import { FashionPostView } from './FashionPostView';
+import type { FashionItem } from './FashionPostView';
+
+export interface Post {
+  id: string;
+  channelId: string;
+  title: string;
+  content: string;
+  imageUrl?: string;
+  imageUrls?: string[];
+  locationName?: string;
+  region?: string;
+  lat?: number;
+  lng?: number;
+  likesCount: number;
+  authorId: string;
+  isAiGenerated?: boolean;
+  mapUrl?: string;
+  sourceLinks?: string[];
+  createdAt: Timestamp;
+  commentsCount?: number;
+  hasPendingWrites?: boolean;
+  fashionItems?: FashionItem[];
+  modelImages?: string[];
+}
+
+const renderMarkdown = (text: string) => {
+  return text
+    .replace(/^### (.+)$/gm, '<h3 class="text-base font-bold mt-3 mb-1 text-slate-800">$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2 class="text-lg font-bold mt-4 mb-2 text-slate-900">$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1 class="text-xl font-bold mt-4 mb-2 text-slate-900">$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="font-bold">$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em class="italic">$1</em>')
+    .replace(/`(.+?)`/g, '<code class="bg-slate-100 text-rose-600 px-1 rounded text-xs font-mono">$1</code>')
+    .replace(/^> (.+)$/gm, '<blockquote class="border-l-4 border-rose-300 pl-3 text-slate-600 italic my-2">$1</blockquote>')
+    .replace(/^- (.+)$/gm, '<li class="ml-4 list-disc">$1</li>')
+    .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer" class="text-indigo-600 underline decoration-indigo-200 underline-offset-2 break-all">$1</a>')
+    .replace(/\n\n/g, '</p><p class="mb-2">')
+    .replace(/\n/g, '<br/>');
+};
+
+const renderLinkedText = (text: string) => {
+  const parts = text.split(/(https?:\/\/[^\s]+)/g);
+  return parts.map((part, index) =>
+    /^https?:\/\//.test(part) ? (
+      <a key={`${part}-${index}`} href={part} target="_blank" rel="noopener noreferrer" className="text-indigo-600 underline decoration-indigo-200 underline-offset-2 break-all">
+        {part}
+      </a>
+    ) : part
+  );
+};
+
+const toMillis = (value: any) => {
+  if (value && typeof value.toDate === 'function') return value.toDate().getTime();
+  if (value instanceof Date) return value.getTime();
+  return 0;
+};
+
+interface Comment {
+  id: string;
+  content: string;
+  authorId: string;
+  postId: string;
+  createdAt: Timestamp;
+  parentId?: string;
+  isAi?: boolean;
+  nickname?: string;
+}
+
+const REGIONS = ['전체', '서울', '부산', '대구', '인천', '광주', '대전', '울산', '세종', '경기', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];
+
+export function PostList({ channelId, externalSearch, refreshKey = 0 }: { channelId: string; externalSearch?: string; refreshKey?: number }) {
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [users, setUsers] = useState<Record<string, { nickname: string }>>({});
+  const { showToast } = useToastStore();
+  const [isLoading, setIsLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedRegion, setSelectedRegion] = useState('전체');
+  const { profile } = useAuthStore();
+  const [expandedPostId, setExpandedPostId] = useState<string | null>(null);
+  const [commentsMap, setCommentsMap] = useState<Record<string, Comment[]>>({});
+  const [newComment, setNewComment] = useState('');
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState('');
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const keyboardInset = useVisualViewportInset();
+  const [likedPosts, setLikedPosts] = useState<Record<string, boolean>>({});
+  const commentUnsubsRef = useRef<Record<string, () => void>>({});
+  const currentUserId = auth.currentUser?.uid;
+  const pendingLikeDeltasRef = useRef<Record<string, number>>({});
+  const likeBusyRef = useRef<Set<string>>(new Set());
+  const likeDeltaTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [contentType, setContentType] = useState<'all' | 'video'>('all');
+  const TABS_CHANNELS = ['freeboard', 'counseling', 'ootd'];
+  const PLACE_CHANNELS = ['hotplace', 'restaurants', 'spots', 'accommodation'];
+
+  const releaseLikeDelta = (postId: string, delta: number) => {
+    const next = (pendingLikeDeltasRef.current[postId] || 0) - delta;
+    if (next === 0) delete pendingLikeDeltasRef.current[postId];
+    else pendingLikeDeltasRef.current[postId] = next;
+  };
+
+  const activeSearch = externalSearch !== undefined ? externalSearch : searchQuery;
+  const isInquiryChannel = channelId === 'inquiries';
+  const isAdminOrManager = profile?.role === 'admin' || profile?.role === 'manager';
+
+  useEffect(() => {
+    if (posts.length === 0) return;
+    const uids = Array.from(new Set(posts.map(p => p.authorId))).filter((id): id is string => Boolean(id) && !users[id]);
+    if (uids.length === 0) return;
+
+    const fetchBatch = async (batchUids: string[]) => {
+      try {
+        const q = query(collection(db, 'users'), where(documentId(), 'in', batchUids));
+        const snap = await getDocs(q);
+        const newUsers: Record<string, { nickname: string }> = {};
+        snap.docs.forEach(doc => {
+          newUsers[doc.id] = doc.data() as { nickname: string };
+        });
+        setUsers(prev => ({ ...prev, ...newUsers }));
+      } catch (err) {
+        console.error("Error fetching users in PostList batch:", err);
+      }
+    };
+
+    for (let i = 0; i < uids.length; i += 30) {
+      fetchBatch(uids.slice(i, i + 30));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [posts]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    if (isInquiryChannel && !isAdminOrManager && !currentUserId) return;
+    const q = isInquiryChannel && !isAdminOrManager
+      ? query(collection(db, 'posts'), where('channelId', '==', channelId), where('authorId', '==', currentUserId))
+      : query(collection(db, 'posts'), where('channelId', '==', channelId));
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const results = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data({ serverTimestamps: 'estimate' }),
+        hasPendingWrites: doc.metadata.hasPendingWrites,
+      } as Post)).sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+      // ✅ 새 게시물이 쓰여도 쿼리에서 즉시 보이도록: hasPendingWrites인 문서 포함 확인
+      const pendingDocs = snapshot.docChanges()
+        .filter(c => c.type === 'added' && c.doc.metadata.hasPendingWrites)
+        .map(c => ({
+          id: c.doc.id,
+          ...c.doc.data({ serverTimestamps: 'estimate' }),
+          hasPendingWrites: true,
+        } as Post));
+      const merged = [...pendingDocs, ...results];
+      const unique = Array.from(new Map(merged.map(p => [p.id, p])).values());
+      const finalResults = unique.sort((a, b) => toMillis(b.createdAt) - toMillis(a.createdAt));
+
+      setPosts(prev => {
+        // ✅ 삭제된 게시물이 expandedPostId이면 모달 닫기
+        const deletedIds = new Set(prev.map(p => p.id));
+        finalResults.forEach(p => deletedIds.delete(p.id));
+        if (deletedIds.size > 0) {
+          setExpandedPostId(cur => deletedIds.has(cur ?? '') ? null : cur);
+        }
+        return finalResults.map(post => {
+          const pendingDelta = pendingLikeDeltasRef.current[post.id] || 0;
+          return pendingDelta ? { ...post, likesCount: Math.max(0, (post.likesCount || 0) + pendingDelta) } : post;
+        });
+      });
+      setIsLoading(false);
+    }, (error) => {
+      console.error('Failed to load posts:', error);
+      setIsLoading(false);
+    });
+
+    return unsub;
+  }, [channelId, currentUserId, isAdminOrManager, isInquiryChannel, refreshKey]);
+
+  // ✅ N+1 쿼리 제거: posts 변경 시마다 각 게시물별 getDoc 호출하지 않음
+  // 좋아요 상태는 클릭 시에만 확인
+  useEffect(() => {
+    Object.values(likeDeltaTimersRef.current).forEach(clearTimeout);
+    likeDeltaTimersRef.current = {};
+    pendingLikeDeltasRef.current = {};
+    likeBusyRef.current.clear();
+    setLikedPosts({});
+  }, [channelId, currentUserId]);
+
+  useEffect(() => {
+    const openPostId = sessionStorage.getItem('openPostId');
+    if (openPostId && posts.find(p => p.id === openPostId)) {
+      sessionStorage.removeItem('openPostId');
+      toggleComments(openPostId);
+      setTimeout(() => {
+        document.getElementById(`post-${openPostId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 100);
+    }
+  }, [posts]);
+
+  const [replyingTo, setReplyingTo] = useState<{ postId: string; commentId: string; authorId?: string; authorNickname?: string } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      (Object.values(commentUnsubsRef.current) as Array<() => void>).forEach(unsub => unsub());
+      Object.values(likeDeltaTimersRef.current).forEach(clearTimeout);
+    };
+  }, []);
+
+  const navigate = useNavigate();
+
+  const toggleComments = (postId: string) => {
+    // Guests should be redirected to the 가입신청 페이지 when trying to open post details
+    if (profile?.role === 'guest') {
+      navigate('/channels/join_request');
+      return;
+    }
+
+    if (expandedPostId === postId) {
+      setExpandedPostId(null);
+      setReplyingTo(null);
+      return;
+    }
+    // ✅ 이전 게시물 댓글 구독 해제
+    if (expandedPostId && commentUnsubsRef.current[expandedPostId]) {
+      commentUnsubsRef.current[expandedPostId]();
+      delete commentUnsubsRef.current[expandedPostId];
+    }
+    setExpandedPostId(postId);
+    setReplyingTo(null);
+    if (!commentUnsubsRef.current[postId]) {
+      const q = query(collection(db, `posts/${postId}/comments`), orderBy('createdAt', 'asc'));
+      commentUnsubsRef.current[postId] = onSnapshot(q, (snapshot) => {
+        setCommentsMap(prev => ({
+          ...prev,
+          [postId]: snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data({ serverTimestamps: 'estimate' }),
+          } as Comment))
+        }));
+      });
+    }
+  };
+
+  const handleLike = async (post: Post) => {
+    if (profile?.role === 'guest') {
+      alert('가입 승인 후 좋아요를 누를 수 있습니다.');
+      return;
+    }
+    if (!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    let isLiked = likedPosts[post.id];
+    // ✅ 처음 클릭 시 getDoc으로 확인 (N+1 제거: posts 변경 시가 아닌 클릭 시만 확인)
+    if (isLiked === undefined) {
+      try {
+        const likeSnap = await getDoc(doc(db, 'posts', post.id, 'likes', uid));
+        isLiked = likeSnap.exists();
+        setLikedPosts(prev => ({ ...prev, [post.id]: isLiked }));
+      } catch {
+        isLiked = false;
+      }
+    }
+    if (likeBusyRef.current.has(post.id)) return;
+    likeBusyRef.current.add(post.id);
+    const delta = isLiked ? -1 : 1;
+
+    if (likeDeltaTimersRef.current[post.id]) {
+      clearTimeout(likeDeltaTimersRef.current[post.id]);
+      delete likeDeltaTimersRef.current[post.id];
+    }
+    pendingLikeDeltasRef.current[post.id] = (pendingLikeDeltasRef.current[post.id] || 0) + delta;
+
+    setLikedPosts(prev => ({ ...prev, [post.id]: !isLiked }));
+    setPosts(prev => prev.map(p => p.id === post.id ? { ...p, likesCount: Math.max(0, (p.likesCount || 0) + delta) } : p));
+
+    const likeRef = doc(db, `posts/${post.id}/likes/${uid}`);
+    const postRef = doc(db, 'posts', post.id);
+    try {
+      if (isLiked) {
+        await runTransaction(db, async (transaction) => {
+          const postSnap = await transaction.get(postRef);
+          const currentCount = postSnap.data()?.likesCount || 0;
+          transaction.delete(likeRef);
+          transaction.update(postRef, { likesCount: Math.max(0, currentCount - 1), updatedAt: serverTimestamp() });
+        });
+      } else {
+        const batch = writeBatch(db);
+        batch.set(likeRef, { userId: uid, createdAt: serverTimestamp() });
+        batch.update(postRef, { likesCount: increment(1), updatedAt: serverTimestamp() });
+        await batch.commit();
+      }
+      releaseLikeDelta(post.id, delta);
+      if (likeDeltaTimersRef.current[post.id]) {
+        clearTimeout(likeDeltaTimersRef.current[post.id]);
+        delete likeDeltaTimersRef.current[post.id];
+      }
+      if (!isLiked && post.authorId !== uid) {
+        addDoc(collection(db, 'notifications'), {
+          userId: post.authorId, type: 'like', actorId: uid,
+          actorName: profile?.nickname || users[uid]?.nickname || '회원',
+          postId: post.id, postTitle: post.title, channelId,
+          message: `${profile?.nickname || '회원'}님이 내 게시물에 좋아요를 눌렀어요.`,
+          read: false, createdAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    } catch (e) {
+      if (likeDeltaTimersRef.current[post.id]) {
+        clearTimeout(likeDeltaTimersRef.current[post.id]);
+        delete likeDeltaTimersRef.current[post.id];
+      }
+      releaseLikeDelta(post.id, delta);
+      setLikedPosts(prev => ({ ...prev, [post.id]: isLiked }));
+      setPosts(prev => prev.map(p => p.id === post.id ? { ...p, likesCount: Math.max(0, (p.likesCount || 0) - delta) } : p));
+      console.error(e);
+    } finally {
+      likeBusyRef.current.delete(post.id);
+    }
+  };
+
+  // ✅ 게시물 신고
+  const handleReport = async (postId: string, postTitle: string) => {
+    const reason = window.prompt(`"${postTitle.substring(0, 30)}" 게시물을 신고하는 이유를 입력해주세요:`);
+    if (!reason?.trim()) return;
+    if (!auth.currentUser) return;
+    try {
+      await addDoc(collection(db, 'posts'), {
+        channelId: 'inquiries',
+        authorId: auth.currentUser.uid,
+        title: `[신고] ${postTitle.substring(0, 50)}`,
+        content: `신고 대상 게시물 ID: ${postId}\n\n신고 이유:\n${reason.trim()}`,
+        locationName: '', region: '', lat: 0, lng: 0,
+        likesCount: 0, isAiGenerated: false,
+        createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      });
+      showToast('신고가 접수되었습니다. 운영진이 검토 후 조치하겠습니다.', 'success');
+    } catch {
+      showToast('신고 접수에 실패했습니다.', 'error');
+    }
+  };
+
+  // ✅ 삭제 즉시 UI 반영 + 모달 닫기
+  const handleDeletePost = async (postId: string) => {
+    if (!confirm('정말로 이 게시물을 삭제하시겠습니까?')) return;
+    // 낙관적 업데이트: 즉시 목록에서 제거 + 모달 닫기
+    setPosts(prev => prev.filter(p => p.id !== postId));
+    if (expandedPostId === postId) setExpandedPostId(null);
+    try {
+      await deleteDoc(doc(db, 'posts', postId));
+    } catch (err) {
+      // 실패 시 롤백은 onSnapshot이 자동으로 복원
+      handleFirestoreError(err, OperationType.DELETE, `posts/${postId}`);
+    }
+  };
+
+  const handleEditPost = (post: Post) => setEditingPost(post);
+
+  const handleAddComment = async (post: Post) => {
+    if (!newComment.trim() || !auth.currentUser) return;
+    const postId = post.id;
+    const contentToSave = newComment.trim();
+    const myNickname = profile?.nickname || users[auth.currentUser.uid]?.nickname || '익명';
+    const parentId = replyingTo && replyingTo.postId === postId ? replyingTo.commentId : undefined;
+    const savedContent = parentId ? `@${replyingTo?.authorNickname} ${contentToSave}` : contentToSave;
+    const newCommentRef = doc(collection(db, `posts/${postId}/comments`));
+    const tempComment: Comment = {
+      id: `temp-${newCommentRef.id}`, postId,
+      authorId: auth.currentUser.uid, nickname: myNickname,
+      content: savedContent, createdAt: Timestamp.now(), parentId,
+    };
+
+    setNewComment('');
+    setReplyingTo(null);
+    setCommentsMap(prev => ({ ...prev, [postId]: [...(prev[postId] || []), tempComment] }));
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p));
+
+    try {
+      const commentData: any = {
+        postId, authorId: auth.currentUser.uid, nickname: myNickname,
+        content: savedContent, createdAt: serverTimestamp(),
+      };
+      if (parentId) commentData.parentId = parentId;
+
+      const batch = writeBatch(db);
+      batch.set(newCommentRef, commentData);
+      batch.update(doc(db, 'posts', postId), { commentsCount: increment(1), updatedAt: serverTimestamp() });
+      const notifyTargetId = parentId && replyingTo?.authorId ? replyingTo.authorId : post.authorId;
+      if (notifyTargetId !== auth.currentUser.uid) {
+        batch.set(doc(collection(db, 'notifications')), {
+          userId: notifyTargetId, type: parentId ? 'reply' : 'comment',
+          actorId: auth.currentUser.uid, actorName: myNickname,
+          postId, postTitle: post.title, channelId,
+          message: parentId ? `${myNickname}님이 내 댓글에 답글을 남겼어요.` : `${myNickname}님이 내 게시물에 댓글을 남겼어요.`,
+          read: false, createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
+      updateDoc(doc(db, 'users', auth.currentUser.uid), { xp: increment(10), updatedAt: serverTimestamp() }).catch(() => {});
+      if (post.isAiGenerated) {
+        generateReply(post.title, post.content, contentToSave).then(async (reply) => {
+          if (reply) {
+            await addDoc(collection(db, `posts/${postId}/comments`), {
+              postId, authorId: 'ai-butler', nickname: '루이',
+              content: reply, createdAt: serverTimestamp(), parentId: newCommentRef.id, isAi: true,
+            });
+            await updateDoc(doc(db, 'posts', postId), { commentsCount: increment(1), updatedAt: serverTimestamp() });
+          }
+        }).catch(console.error);
+      }
+    } catch (err) {
+      setCommentsMap(prev => ({ ...prev, [postId]: (prev[postId] || []).filter(c => c.id !== tempComment.id) }));
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsCount: Math.max(0, (p.commentsCount || 0) - 1) } : p));
+      setNewComment(contentToSave);
+      handleFirestoreError(err, OperationType.CREATE, `posts/${postId}/comments`);
+    }
+  };
+
+  const handleDeleteComment = async (postId: string, commentId: string) => {
+    if (!confirm('댓글을 삭제하시겠습니까?')) return;
+    const previousComments = commentsMap[postId] || [];
+    setCommentsMap(prev => ({ ...prev, [postId]: previousComments.filter(c => c.id !== commentId) }));
+    setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsCount: Math.max(0, (p.commentsCount || 0) - 1) } : p));
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, `posts/${postId}/comments/${commentId}`));
+      batch.update(doc(db, 'posts', postId), { commentsCount: increment(-1), updatedAt: serverTimestamp() });
+      await batch.commit();
+    } catch (err) {
+      setCommentsMap(prev => ({ ...prev, [postId]: previousComments }));
+      setPosts(prev => prev.map(p => p.id === postId ? { ...p, commentsCount: (p.commentsCount || 0) + 1 } : p));
+      handleFirestoreError(err, OperationType.DELETE, `posts/${postId}/comments/${commentId}`);
+    }
+  };
+
+  const handleEditCommentSubmit = async (postId: string, commentId: string) => {
+    if (!editCommentContent.trim()) return;
+    try {
+      await updateDoc(doc(db, `posts/${postId}/comments/${commentId}`), { content: editCommentContent.trim(), updatedAt: serverTimestamp() });
+      setEditingCommentId(null);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `posts/${postId}/comments/${commentId}`);
+    }
+  };
+
+  const handleDownloadImage = async (url: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const objUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objUrl;
+      link.download = `photo_${Date.now()}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      window.URL.revokeObjectURL(objUrl);
+      document.body.removeChild(link);
+    } catch {
+      alert('이미지 다운로드에 실패했습니다.');
+    }
+  };
+
+  const filteredPosts = posts.filter(post => {
+    if (String(post.channelId) !== String(channelId)) return false;
+    const matchesRegion = selectedRegion === '전체' || (post.region || post.locationName || '').includes(selectedRegion);
+    if (!matchesRegion) return false;
+    // 서브탭 필터: 동영상 탭이면 유튜브 링크 포함된 것만
+    if (contentType === 'video') {
+      const allText = (post.content || '') + ' ' + (post.sourceLinks || []).join(' ');
+      if (!allText.includes('youtu')) return false;
+    }
+    if (!activeSearch.trim()) return true;
+    const sq = activeSearch.toLowerCase();
+    const nickname = isInquiryChannel ? '' : users[post.authorId]?.nickname?.toLowerCase() || '';
+    return (
+      post.title.toLowerCase().includes(sq) ||
+      post.content.toLowerCase().includes(sq) ||
+      (post.locationName && post.locationName.toLowerCase().includes(sq)) ||
+      (post.region && post.region.toLowerCase().includes(sq)) ||
+      nickname.includes(sq)
+    );
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex space-x-4">
+            <div className="w-28 h-28 bg-slate-100 rounded-xl flex-shrink-0" />
+            <div className="flex-1 space-y-3 pt-1">
+              <div className="h-3 bg-slate-100 rounded w-1/4" />
+              <div className="h-5 bg-slate-100 rounded w-3/4" />
+              <div className="h-3 bg-slate-100 rounded w-full" />
+              <div className="h-3 bg-slate-100 rounded w-5/6" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (posts.length === 0) {
+    return (
+      <div className="text-center py-20 text-slate-400">
+        <p className="text-4xl text-slate-300 mb-4">📭</p>
+        <p>아직 등록된 게시물이 없습니다.</p>
+        <p className="text-sm mt-2">첫 번째 게시물을 남겨주세요!</p>
+      </div>
+    );
+  }
+
+  const selectedPost = posts.find(p => p.id === expandedPostId);
+  const selectedPostPreviewUrl = selectedPost
+    ? (firstUsableImageUrl(selectedPost.imageUrl, selectedPost.imageUrls, selectedPost.sourceLinks) || getCategoryFallbackImage(selectedPost.channelId))
+    : '';
+
+  const isMapLink = (url: string) => {
+    const u = url.toLowerCase();
+    return (
+      u.includes('map.kakao') ||
+      u.includes('m.map.kakao') ||
+      u.includes('place.map.kakao') ||
+      u.includes('kakao.com/link') ||
+      u.includes('kko.to') ||
+      u.includes('map.naver') ||
+      u.includes('m.place.naver') ||
+      u.includes('naver.me') ||
+      u.includes('google.com/maps') ||
+      u.includes('maps.app.goo.gl')
+    );
+  };
+
+  // ✅ 커뮤니티 채널(자유/패션/생활꿀팁 등)에서는 지도 링크 프리뷰가 절대 뜨면 안 됨
+  const allowMapUiForSelectedPost = Boolean(selectedPost && PLACE_CHANNELS.includes(selectedPost.channelId));
+
+  const selectedPostPreviewLinks = selectedPost
+    ? Array.from(new Set([
+        ...extractUrls(selectedPost.content || ''),
+        ...(selectedPost.sourceLinks || []),
+      ]))
+        .filter(url => !isDirectImageUrl(url))
+        .filter(url => allowMapUiForSelectedPost || !isMapLink(url))
+        .slice(0, 4)
+    : [];
+
+  // ✅ 지도 링크 생성: locationName에서 장소명만 추출 (주소 중복 방지)
+  const buildMapLinks = (post: Post) => {
+    if (!PLACE_CHANNELS.includes(post.channelId)) return [];
+    const hasPreciseCoords = post.lat && post.lat !== 0 && post.lng && post.lng !== 0;
+    const locName = post.locationName?.trim() || '';
+    
+    // 이미 좌표가 있으면 좌표 기반 카카오맵
+    if (hasPreciseCoords && locName) {
+      return [{
+        href: `https://map.kakao.com/link/map/${encodeURIComponent(locName)},${post.lat},${post.lng}`,
+        label: '카카오맵',
+        bg: 'bg-[#FAE100]',
+        textColor: 'text-[#3C1E1E]',
+        favicon: 'kakaomap.com',
+      }];
+    }
+
+    const links: Array<{ href: string; label: string; bg: string; textColor: string; favicon: string }> = [];
+
+    // mapUrl이 있으면 사용 (중복 제거를 위해 kakao/naver 각 1개씩만)
+    if (post.mapUrl) {
+      const isKakao = post.mapUrl.includes('kakao');
+      const isNaver = post.mapUrl.includes('naver');
+      if (isKakao) {
+        links.push({ href: post.mapUrl, label: '카카오맵', bg: 'bg-[#FAE100]', textColor: 'text-[#3C1E1E]', favicon: 'kakaomap.com' });
+      } else if (isNaver) {
+        links.push({ href: post.mapUrl, label: '네이버 지도', bg: 'bg-[#03C75A]', textColor: 'text-white', favicon: 'map.naver.com' });
+      }
+    }
+
+    // sourceLinks에서 지도 링크만 추가 (이미 추가된 것과 중복 방지)
+    if (post.sourceLinks) {
+      for (const link of post.sourceLinks) {
+        if (links.length >= 2) break;
+        const isKakaoLink = link.includes('kakao.com/link') || link.includes('map.kakao');
+        const isNaverLink = link.includes('map.naver');
+        const alreadyHasKakao = links.some(l => l.favicon === 'kakaomap.com');
+        const alreadyHasNaver = links.some(l => l.favicon === 'map.naver.com');
+        if (isKakaoLink && !alreadyHasKakao) {
+          links.push({ href: link, label: '카카오맵', bg: 'bg-[#FAE100]', textColor: 'text-[#3C1E1E]', favicon: 'kakaomap.com' });
+        } else if (isNaverLink && !alreadyHasNaver) {
+          links.push({ href: link, label: '네이버 지도', bg: 'bg-[#03C75A]', textColor: 'text-white', favicon: 'map.naver.com' });
+        }
+      }
+    }
+
+    // 둘 다 없으면 locationName으로 검색 링크 생성
+    if (links.length === 0 && locName) {
+      // 장소명만 추출 (주소가 포함되어 있으면 첫 번째 의미 단위만 사용)
+      const searchKeyword = locName.length > 30
+        ? locName.split(/\s+/).slice(0, 3).join(' ')
+        : locName;
+      links.push({
+        href: `https://map.kakao.com/link/search/${encodeURIComponent(searchKeyword)}`,
+        label: '카카오맵 검색',
+        bg: 'bg-[#FAE100]',
+        textColor: 'text-[#3C1E1E]',
+        favicon: 'kakaomap.com',
+      });
+    }
+
+    return links;
+  };
+
+  return (
+    <>
+      <div className="mb-6 flex flex-col md:flex-row gap-3">
+        {(channelId === 'hotplace' || channelId === 'restaurants' || channelId === 'spots' || channelId === 'accommodation') && (
+          <div className="flex-shrink-0 relative">
+            <select
+              value={selectedRegion}
+              onChange={e => setSelectedRegion(e.target.value)}
+              className="appearance-none bg-white border border-slate-200 rounded-lg pl-4 pr-10 py-2 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-400 min-w-[120px]"
+            >
+              {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+            </div>
+          </div>
+        )}
+        {externalSearch === undefined && (
+          <div className="relative flex-1 max-w-md">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="제목, 내용, 지역, 닉네임으로 검색..."
+              className="w-full bg-white border border-slate-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            />
+            <svg className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+          </div>
+        )}
+      </div>
+
+      {/* 서브 탭 (통합/동영상) */}
+      {TABS_CHANNELS.includes(channelId) && (
+        <div className="flex gap-1 mb-4 bg-slate-100 rounded-lg p-1 max-w-xs">
+          <button
+            onClick={() => setContentType('all')}
+            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all ${contentType === 'all' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >통합</button>
+          <button
+            onClick={() => setContentType('video')}
+            className={`flex-1 py-1.5 px-3 rounded-md text-xs font-bold transition-all ${contentType === 'video' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >🎬 동영상</button>
+        </div>
+      )}
+
+      {filteredPosts.length === 0 && posts.length > 0 && (
+        <div className="text-center py-20 text-slate-400">
+          <p className="text-4xl text-slate-300 mb-4">🔍</p>
+          <p>검색 결과가 없습니다.</p>
+        </div>
+      )}
+
+      <div className={(channelId === 'ootd' || channelId === 'meeting_board') ? 'grid grid-cols-2 sm:grid-cols-3 gap-3 pb-20' : 'grid grid-cols-1 gap-6 pb-20'}>
+        {filteredPosts.map(post => {
+          const isAuthor = auth.currentUser?.uid === post.authorId;
+          const canManage = isAdminOrManager || isAuthor;
+          const isAdmin = profile?.role === 'admin';
+          const authorLabel = isInquiryChannel
+            ? (isAuthor ? '내 비공개 문의' : '비공개 문의')
+            : users[post.authorId]?.nickname || (post.isAiGenerated ? '루이' : '익명');
+          const thumbnailUrl = firstUsableImageUrl(post.imageUrl, post.imageUrls, post.sourceLinks) || getCategoryFallbackImage(post.channelId);
+
+          {/* 패션/OOTD 또는 모임 사진: 갤러리/그리드 스타일 카드 */}
+          if (channelId === 'ootd' || channelId === 'meeting_board') {
+            return (
+              <div key={post.id} id={`post-${post.id}`}
+                className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden cursor-pointer hover:shadow-md transition-shadow group flex flex-col"
+                onClick={() => toggleComments(post.id)}
+              >
+                <div className={`${channelId === 'meeting_board' ? 'aspect-square' : 'aspect-[3/4]'} overflow-hidden bg-slate-100 relative`}>
+                  {thumbnailUrl ? (
+                    <img src={thumbnailUrl} alt={post.title} referrerPolicy="no-referrer"
+                      loading="lazy" decoding="async"
+                      className="w-full h-full object-cover md:group-hover:scale-105 md:transition-transform md:duration-300"
+                      onError={(e) => { const fb = getCategoryFallbackImage(post.channelId); if (fb) e.currentTarget.src = fb; }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-4xl text-slate-200">👔</div>
+                  )}
+                  {canManage && (
+                    <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); handleEditPost(post); }} className="bg-white/90 text-slate-600 text-[10px] px-1.5 py-0.5 rounded font-bold">수정</button>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeletePost(post.id); }} className="bg-white/90 text-rose-500 text-[10px] px-1.5 py-0.5 rounded font-bold">삭제</button>
+                    </div>
+                  )}
+                  {post.isAiGenerated && <span className="absolute top-1.5 left-1.5 text-[9px] bg-indigo-600/80 text-white px-1.5 py-0.5 rounded-full font-bold">AI</span>}
+                </div>
+                <div className="p-2.5">
+                  <p className="text-[11px] text-slate-400 font-medium mb-0.5">{authorLabel}</p>
+                  <h3 className="text-sm font-bold text-slate-800 line-clamp-2 leading-snug">{post.title}</h3>
+                  <p className="text-[11px] text-slate-500 mt-1 line-clamp-1">
+                    {post.content.replace(/[#*>\-!\[\]()]/g, '').replace(/https?:\/\/[^\s]+/g, '').trim().slice(0, 60)}
+                  </p>
+                  <div className="flex items-center gap-2 mt-auto pt-1.5 text-[10px] text-slate-400">
+                    <span>♡ {post.likesCount || 0}</span>
+                    <span>💬 {post.commentsCount || 0}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={post.id} id={`post-${post.id}`} className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-col space-y-4">
+              <div className="flex space-x-3 sm:space-x-4">
+                {thumbnailUrl ? (
+                  <div className="relative flex-shrink-0 overflow-hidden rounded-xl w-24 h-24 sm:w-32 sm:h-32 bg-slate-100">
+                    <img src={thumbnailUrl} alt={post.title} referrerPolicy="no-referrer"
+                      onClick={() => setLightboxUrl(thumbnailUrl)}
+                      className={`w-full h-full object-cover cursor-zoom-in hover:opacity-90 transition-all ${thumbnailUrl.includes('youtube.com') || thumbnailUrl.includes('ytimg.com') ? 'scale-[1.35]' : ''}`}
+                      onError={(e) => {
+                        const fallback = getCategoryFallbackImage(post.channelId);
+                        if (fallback && e.currentTarget.src !== new URL(fallback, window.location.origin).href) e.currentTarget.src = fallback;
+                        else (e.currentTarget.parentElement as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                    <button onClick={(e) => { e.stopPropagation(); handleDownloadImage(thumbnailUrl); }}
+                      title="이미지 다운로드"
+                      className="absolute bottom-1.5 right-1.5 bg-black/60 hover:bg-black/80 text-white w-7 h-7 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 z-20">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-24 h-24 sm:w-32 sm:h-32 bg-slate-100 rounded-xl flex-shrink-0 flex items-center justify-center text-slate-300 text-2xl cursor-pointer" onClick={() => toggleComments(post.id)}>🌉</div>
+                )}
+
+                <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="flex justify-between items-start">
+                    <div className="flex flex-col gap-1 min-w-0">
+                      {PLACE_CHANNELS.includes(post.channelId) && post.locationName && (
+                        <span className="bg-rose-50 text-rose-500 text-[10px] font-bold px-2 py-0.5 rounded-md truncate max-w-[150px]">📍 {post.locationName}</span>
+                      )}
+                      <span className="text-[11px] text-slate-400 font-medium">{authorLabel}</span>
+                    </div>
+                    <div className="flex items-center space-x-2 flex-shrink-0">
+                      <span className="text-slate-400 text-xs">
+                        {post.hasPendingWrites ? '전송 중' : post.createdAt ? formatDistanceToNow(post.createdAt.toDate(), { addSuffix: true, locale: ko }) : '방금 전'}
+                      </span>
+                      {canManage && (
+                        <div className="flex space-x-1">
+                          <button onClick={() => handleEditPost(post)} className="text-slate-400 hover:text-indigo-500 text-xs">수정</button>
+                          <button onClick={() => handleDeletePost(post.id)} className="text-slate-400 hover:text-rose-500 text-xs">삭제</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <h3 className="text-lg font-bold mt-1 text-slate-900 truncate cursor-pointer hover:text-rose-600 transition-colors" onClick={() => toggleComments(post.id)}>{post.title}</h3>
+                  <p className="text-slate-600 text-sm mt-1 line-clamp-2 leading-relaxed">
+                    {post.content.replace(/#{1,3} /g, '').replace(/\*\*/g, '').replace(/\*/g, '').replace(/^> /gm, '').replace(/^- /gm, '• ')}
+                  </p>
+                  <div className="flex items-center mt-auto pt-3 space-x-4">
+                    {!isInquiryChannel && (
+                      <button onClick={() => handleLike(post)}
+                        className={`flex items-center text-xs font-semibold px-2 py-1 rounded-md transition-colors ${likedPosts[post.id] ? 'text-rose-500 bg-rose-50' : 'text-slate-400 hover:bg-slate-50'}`}>
+                        <svg className="w-4 h-4 mr-1" fill={likedPosts[post.id] ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+                        </svg>
+                        {Math.max(0, post.likesCount || 0)}
+                      </button>
+                    )}
+                    <button onClick={() => toggleComments(post.id)}
+                      className="flex items-center text-slate-400 text-xs hover:bg-slate-100 px-2 py-1 rounded-md transition-colors">
+                      <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                      </svg>
+                      {isInquiryChannel ? '답변' : '댓글'} {post.commentsCount ?? commentsMap[post.id]?.length ?? ''}
+                    </button>
+                    {post.isAiGenerated && <span className="text-[10px] bg-indigo-50 text-indigo-400 px-2 py-0.5 rounded-full font-bold">🤵 AI 추천</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* 게시물 상세 + 댓글 모달 */}
+      {selectedPost && (
+        <div
+          className="fixed inset-0 z-[30000] bg-slate-900/60 backdrop-blur-sm flex items-stretch justify-center p-0 md:items-center md:p-6"
+          style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: keyboardInset ? `${keyboardInset}px` : 'env(safe-area-inset-bottom)' }}
+          onClick={() => toggleComments(selectedPost.id)}
+        >
+          <div className="bg-white w-full h-[100dvh] max-h-[100dvh] rounded-none flex flex-col overflow-hidden shadow-2xl md:h-auto md:max-w-4xl md:max-h-[90vh] md:rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center p-4 border-b border-slate-100 bg-slate-50 relative shrink-0">
+              <h2 className="font-bold text-lg text-slate-800 line-clamp-1 pr-8">{selectedPost.title}</h2>
+              <button onClick={() => toggleComments(selectedPost.id)} className="w-8 h-8 rounded-full bg-slate-200 text-slate-600 flex items-center justify-center hover:bg-slate-300 font-bold transition-colors absolute right-4">✕</button>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar flex flex-col">
+              <div className="w-full p-4 md:p-6 border-b border-slate-100 space-y-4 bg-white">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-bold text-slate-700">
+                    {isInquiryChannel
+                      ? (auth.currentUser?.uid === selectedPost.authorId ? '내 비공개 문의' : '비공개 문의')
+                      : users[selectedPost.authorId]?.nickname || (selectedPost.isAiGenerated ? '루이' : '익명')}
+                  </span>
+                  {selectedPost.isAiGenerated && <span className="text-[10px] bg-indigo-50 text-indigo-400 px-2 py-0.5 rounded-full font-bold">AI 추천</span>}
+                  <span className="text-slate-400 text-xs ml-auto">
+                    {selectedPost.createdAt ? formatDistanceToNow(selectedPost.createdAt.toDate(), { addSuffix: true, locale: ko }) : '방금 전'}
+                  </span>
+                </div>
+
+                {/* OOTD 패션 전용 레이아웃 */}
+                {selectedPost.channelId === 'ootd' ? (
+                  <FashionPostView
+                    title={selectedPost.title}
+                    content={selectedPost.content}
+                    fashionItems={selectedPost.fashionItems}
+                    modelImages={selectedPost.modelImages}
+                    imageUrls={selectedPost.imageUrls}
+                    sourceLinks={selectedPost.sourceLinks}
+                  />
+                ) : (
+                  <>
+                {(selectedPost.imageUrls && selectedPost.imageUrls.length > 0) ? (
+                  <div className="space-y-2">
+                    {selectedPost.imageUrls.map((url, i) => (
+                      <div key={i} className="relative rounded-xl overflow-hidden shadow-sm group bg-slate-50">
+                        <img 
+                          src={url} 
+                          referrerPolicy="no-referrer" 
+                          alt={selectedPost.title} 
+                          onClick={() => setLightboxUrl(url)}
+                          className="w-full h-auto object-contain max-h-[500px] cursor-zoom-in hover:opacity-95 transition-opacity" 
+                        />
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); handleDownloadImage(url); }}
+                          title="이미지 다운로드"
+                          className="absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 text-white w-9 h-9 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 z-20"
+                        >
+                          <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : selectedPostPreviewUrl ? (
+                  <div className="relative rounded-xl overflow-hidden shadow-sm group bg-slate-50">
+                    <img 
+                      src={selectedPostPreviewUrl} 
+                      referrerPolicy="no-referrer" 
+                      alt={selectedPost.title} 
+                      onClick={() => setLightboxUrl(selectedPostPreviewUrl)}
+                      className="w-full h-auto object-contain max-h-[500px] cursor-zoom-in hover:opacity-95 transition-opacity" 
+                    />
+                    <button 
+                      onClick={(e) => { e.stopPropagation(); handleDownloadImage(selectedPostPreviewUrl); }}
+                      title="이미지 다운로드"
+                      className="absolute bottom-3 right-3 bg-black/60 hover:bg-black/80 text-white w-9 h-9 rounded-full flex items-center justify-center transition-all shadow-md active:scale-95 z-20"
+                    >
+                      <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                    </button>
+                  </div>
+                ) : null}
+
+                {allowMapUiForSelectedPost && selectedPost.locationName && (
+                  <span className="inline-block bg-rose-50 text-rose-500 text-[10px] font-bold px-3 py-1 rounded-full mb-2">📍 {selectedPost.locationName}</span>
+                )}
+
+                <div className="text-slate-700 text-sm leading-relaxed"
+                  dangerouslySetInnerHTML={{ __html: '<p class="mb-2">' + renderMarkdown(selectedPost.content) + '</p>' }} />
+
+                {selectedPostPreviewLinks.map(url => <div key={url}><LinkPreviewCard url={url} /></div>)}
+
+                {selectedPost.sourceLinks && selectedPost.sourceLinks.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-3">
+                    <p className="text-[11px] font-bold text-slate-500 mb-2">참고 리뷰</p>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedPost.sourceLinks
+                        .filter(url => !isMapLink(url))
+                        .slice(0, 3)
+                        .map((url, index) => (
+                          <a key={index} href={url} target="_blank" rel="noopener noreferrer"
+                            className="text-[11px] font-bold bg-white border border-slate-200 text-slate-600 px-3 py-1.5 rounded-full hover:border-indigo-200 hover:text-indigo-600">
+                            리뷰 {index + 1} 열기 ↗
+                          </a>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ✅ 지도 링크 - 중복 제거, 올바른 검색어 사용 */}
+                {(() => {
+                  const mapLinks = buildMapLinks(selectedPost);
+                  if (mapLinks.length === 0) return null;
+                  return (
+                    <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-slate-50">
+                      {mapLinks.map((link, i) => (
+                        <a key={i} href={link.href} target="_blank" rel="noopener noreferrer"
+                          className={`inline-flex items-center gap-1.5 text-[11px] ${link.bg} ${link.textColor} font-bold px-3 py-2 rounded-lg hover:opacity-90 transition-all shadow-sm`}>
+                          <img src={`https://www.google.com/s2/favicons?domain=${link.favicon}`} alt="" className="w-3.5 h-3.5" />
+                          {link.label}
+                        </a>
+                      ))}
+                    </div>
+                  );
+                })()}
+                </>
+                )}
+              </div>
+
+              {/* 댓글 */}
+              <div className="w-full min-h-[320px] flex flex-col bg-slate-50">
+                <div className="p-4 border-b border-slate-200 flex justify-between items-center bg-white shrink-0">
+                  <h3 className="font-bold text-slate-800 flex items-center">
+                    <svg className="w-4 h-4 mr-1 text-slate-400" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clipRule="evenodd" /></svg>
+                    {isInquiryChannel ? '답변' : '댓글'} {selectedPost.commentsCount ?? commentsMap[selectedPost.id]?.length ?? 0}
+                  </h3>
+                  {!isInquiryChannel && (
+                    <button onClick={() => handleLike(selectedPost)}
+                      className={`flex items-center text-sm font-bold px-3 py-1.5 rounded-full transition-colors ${likedPosts[selectedPost.id] ? 'bg-rose-100 text-rose-500' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                      <svg className="w-4 h-4 mr-1" fill={likedPosts[selectedPost.id] ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clipRule="evenodd" />
+                      </svg>
+                      {Math.max(0, selectedPost.likesCount || 0)}
+                    </button>
+                  )}
+                  {/* ✅ 신고 버튼 */}
+                  {!isInquiryChannel && auth.currentUser?.uid !== selectedPost.authorId && (
+                    <button
+                      onClick={() => handleReport(selectedPost.id, selectedPost.title)}
+                      className="ml-auto text-[10px] text-slate-300 hover:text-rose-400 px-2 py-1 rounded transition-colors"
+                      title="신고하기"
+                    >
+                      신고
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+                  {commentsMap[selectedPost.id]?.map(comment => (
+                    <div key={comment.id} className={`p-3 rounded-xl flex flex-col group relative ${comment.parentId ? 'ml-6 bg-white border border-slate-200' : 'bg-white shadow-sm'}`}>
+                      <div className="flex justify-between items-start mb-1">
+                        <span className={`text-xs font-bold ${comment.isAi ? 'text-indigo-600' : 'text-slate-700'}`}>
+                          {isInquiryChannel
+                            ? (comment.authorId === selectedPost.authorId ? '문의자' : '운영진')
+                            : comment.nickname || (comment.isAi ? '루이' : users[comment.authorId]?.nickname || '익명')}
+                        </span>
+                        <div className="flex items-center space-x-2 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-md transition-opacity absolute top-2 right-2 shadow-sm border border-slate-100 z-10 md:opacity-0 md:group-hover:opacity-100 opacity-100">
+                          <span className="text-[10px] text-slate-400">
+                            {comment.createdAt ? formatDistanceToNow(comment.createdAt.toDate(), { addSuffix: true, locale: ko }) : '방금 전'}
+                          </span>
+                          {(auth.currentUser?.uid === comment.authorId || profile?.role === 'admin' || profile?.role === 'manager') && (
+                            <button onClick={() => { setEditingCommentId(comment.id); setEditCommentContent(comment.content); }} className="text-[10px] text-indigo-500 font-bold ml-2">수정</button>
+                          )}
+                          {(profile?.role === 'admin' || profile?.role === 'manager' || auth.currentUser?.uid === comment.authorId) && (
+                            <button onClick={() => handleDeleteComment(selectedPost.id, comment.id)} className="text-[10px] text-rose-500 font-bold ml-2">삭제</button>
+                          )}
+                        </div>
+                      </div>
+                      {editingCommentId === comment.id ? (
+                        <div className="mt-2 space-y-2 relative z-20">
+                          <textarea value={editCommentContent} onChange={e => setEditCommentContent(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm resize-none focus:ring-2 focus:ring-indigo-400 focus:outline-none" rows={2} />
+                          <div className="flex justify-end space-x-2">
+                            <button onClick={() => setEditingCommentId(null)} className="text-[10px] text-slate-400 px-2 py-1 bg-slate-100 rounded font-bold">취소</button>
+                            <button onClick={() => handleEditCommentSubmit(selectedPost.id, comment.id)} className="text-[10px] text-white px-2 py-1 bg-indigo-500 rounded font-bold">저장</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-sm text-slate-600 break-words whitespace-pre-wrap">{renderLinkedText(comment.content)}</p>
+                      )}
+                      {!comment.parentId && editingCommentId !== comment.id && (
+                        <div className="mt-2 text-right">
+                          <button
+                            onClick={() => setReplyingTo({ postId: selectedPost.id, commentId: comment.id, authorId: comment.authorId, authorNickname: isInquiryChannel ? '문의' : comment.nickname || users[comment.authorId]?.nickname || '익명' })}
+                            className="text-[10px] text-slate-400 hover:text-indigo-500 font-bold px-2 py-1 rounded bg-slate-50 hover:bg-indigo-50 transition-colors">
+                            ↳ 답글달기
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {(!commentsMap[selectedPost.id] || commentsMap[selectedPost.id].length === 0) && (
+                    <div className="flex flex-col items-center justify-center py-10 text-slate-400">
+                      <span className="text-3xl mb-2">💬</span>
+                      <p className="text-sm">첫 번째 댓글을 남겨보세요!</p>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-3 bg-white border-t border-slate-200 shrink-0">
+                  {replyingTo?.postId === selectedPost.id && (
+                    <div className="text-xs text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-t-lg flex justify-between items-center border border-b-0 border-indigo-100">
+                      <span className="font-bold">@{replyingTo.authorNickname}님에게 답글 작성 중...</span>
+                      <button onClick={() => setReplyingTo(null)} className="hover:text-indigo-800 text-[10px] bg-indigo-100 px-2 py-0.5 rounded font-bold">취소 ✕</button>
+                    </div>
+                  )}
+                  <form className="flex space-x-2" onSubmit={(e) => { e.preventDefault(); handleAddComment(selectedPost); }}>
+                    <input
+                      type="text"
+                      disabled={profile?.role === 'guest'}
+                      value={expandedPostId === selectedPost.id ? newComment : ''}
+                      onChange={e => setNewComment(e.target.value)}
+                      placeholder={
+                        profile?.role === 'guest'
+                          ? '가입 승인 후 댓글을 작성할 수 있습니다.'
+                          : isInquiryChannel
+                            ? '문의에 대한 추가 내용이나 답변을 입력하세요...'
+                            : '따뜻한 댓글을 남겨주세요...'
+                      }
+                      className={`flex-1 bg-slate-50 border border-slate-200 text-sm px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-400 transition-all ${replyingTo?.postId === selectedPost.id ? 'rounded-b-lg rounded-tr-lg' : 'rounded-full'}`}
+                    />
+                    <button type="submit" disabled={profile?.role === 'guest' || !newComment.trim()}
+                      className="bg-rose-500 text-white font-bold w-12 rounded-full flex items-center justify-center disabled:opacity-50 disabled:bg-slate-300 transition-colors">
+                      <svg className="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingPost && (
+        <WritePostModal
+          channelId={channelId}
+          onClose={() => setEditingPost(null)}
+          editPost={{
+            id: editingPost.id, title: editingPost.title, content: editingPost.content,
+            imageUrls: editingPost.imageUrls, imageUrl: editingPost.imageUrl,
+            locationName: editingPost.locationName, region: editingPost.region,
+            lat: editingPost.lat, lng: editingPost.lng,
+          }}
+        />
+      )}
+
+      {/* 이미지 라이트박스 확대 뷰어 모달 */}
+      {lightboxUrl && (
+        <div 
+          className="fixed inset-0 bg-black/95 z-[999999] flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setLightboxUrl(null)}
+        >
+          <div className="relative max-w-full max-h-full flex items-center justify-center">
+            <img 
+              src={lightboxUrl} 
+              referrerPolicy="no-referrer"
+              alt="Expanded view" 
+              className="max-w-[95vw] max-h-[95vh] object-contain rounded-lg shadow-2xl" 
+            />
+            <button 
+              onClick={(e) => { e.stopPropagation(); handleDownloadImage(lightboxUrl); }}
+              className="absolute top-4 right-16 bg-white/20 hover:bg-white/30 text-white w-10 h-10 rounded-full flex items-center justify-center transition-colors shadow-lg active:scale-95 z-30"
+              title="이미지 다운로드"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            </button>
+            <button 
+              onClick={() => setLightboxUrl(null)}
+              className="absolute top-4 right-4 bg-white/20 hover:bg-white/30 text-white w-10 h-10 rounded-full flex items-center justify-center transition-colors shadow-lg font-bold text-lg active:scale-95 z-30"
+              title="닫기"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}

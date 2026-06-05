@@ -1,0 +1,84 @@
+# 동전커피 AI 공통 작업환경 규칙 + AI_SKILLS 통합 (Windsurf/Cascade용)
+
+## 1. Anti-Monolithic (단일 파일 결합 금지)
+- 파일 당 최대 300줄을 권장. 400줄 이상이면 반드시 컴포넌트/함수 분리 고려
+- UI 컴포넌트, 비즈니스 로직, 유틸리티 함수, API 호출은 각각 독립된 파일에 위치
+- hooks/, utils/, components/, lib/ 폴더 구조를 적극 활용
+
+## 2. 보안 아키텍처
+- API Key, DB URL, 인증 정보는 절대 하드코딩 금지 → .env 파일 + import.meta.env 사용
+- Firestore Rules는 클라이언트 외의 유일한 보안 경계선으로 인식. 민감 로직은 반드시 Rules 또는 Cloud Functions로 이전
+- 관리자 페이지 접근: client-side 조건부 렌더링만으로는 부족. URL 직접 접근 차단 + Firestore Rules로 이중 보호
+
+## 3. 예외 처리 및 안정성
+- 모든 async 함수는 try-catch 필수. 외부 라이브러리 호출은 .catch(() => {})라도 반드시 붙일 것
+- 사용자 입력(nickname, content, title 등)은 생성/수정 시 항상 타입과 길이 검증 (클라이언트 + 서버 Rules 양측)
+- 에러 발생 시 사용자가 인지할 수 있는 toast/alert/UI 메시지 제공
+
+## 4. React/Firestore 성능
+- Firestore 실시간 리스너(onSnapshot)는 반드시 cleanup 함수로 구독 해제
+- 상태 업데이트는 batch/setDoc/updateDoc으로 일괄 처리. 단일 문서 순차 저장 금지
+- SPA 네비게이션: window.location.href 대신 React Router의 navigate() 사용
+
+## 5. 작업 프로세스 (원본복사 → 수정 → 승격)
+- 코드 수정 전 반드시 원본 파일 복사본(.bak, .bak_fix 등) 생성
+- 한 파일에 과도한 수정을 몰아넣지 말고, 단계별로 커밋/배포
+- 수정 완료 후 npm run build로 컴파일 에러 확인 → 배포
+
+## 6. 모바일 최적화
+- Tailwind 반응형 접두사: 모바일 기본 → sm/md/lg로 확장 (모바일 퍼스트)
+- 터치 타겟 최소 40px 확보. 버튼/아이콘 간격은 손가락 조작 고려
+
+## 7. UX 일관성
+- 로딩 상태: spinner 또는 skeleton UI 제공. 빈 화면 금지
+- 성공/실패 피드백: playCoinSound() 등 청각/시각 피드백 적극 활용
+- 모달/드롭다운: 바깥 클릭 닫힘 + stopPropagation 필수
+
+---
+
+# AI_SKILLS 통합 (D:\신패\AI_SKILLS)
+
+## Karpathy Guidelines (4원칙)
+1. Think Before Coding: 추측 금지, 혼란 노출. 여러 해석이 있으면 제시 후 묻기. 더 간단한 방법 있으면 말하기.
+2. Simplicity First: 요구된 것만 구현. 단일 사용 코드에 추상화 금지. 200줄을 50줄로 줄일 수 있으면 다시 쓰기.
+3. Surgical Changes: 필요한 것만 수정. 고장나지 않은 것은 리팩터링 금지. 기존 스타일 매칭. 사용자 요청에 직접 연결된 줄만 변경.
+4. Goal-Driven Execution: 검증 가능한 목표로 변환. "버그 수정" → "재현 테스트 작성 → 통과"
+
+## Diagnose 스킬 (버그/성능 회귀 진단)
+사용자가 "diagnose this", "debug this", "broken", "failing", "performance regression"이라고 하면:
+- Phase 1: 재현 가능한 빠른 피드백 루프 구축 (실패 테스트, curl, CLI, Playwright, 리플레이, 하네스, 퍼즈, bisection)
+- Phase 2: 루프로 버그 재현 확인 (사용자가 설명한 것과 동일한 실패 모드인지 검증)
+- Phase 3: 3~5개의 순위별 가설 생성. 각각 검증 가능한 예측 명시. 사용자에게 보여주기.
+- Phase 4: 한 번에 한 변수만 변경. 디버거 > 로그. [DEBUG-xxx] 태그 필수.
+- Phase 5: 회귀 테스트를 수정 전에 작성. 실패 확인 → 수정 → 통과. 원본 시나리오 재실행.
+- Phase 6: [DEBUG-...] 로그 제거. 일회용 프로토타입 삭제. 원인을 커밋 메시지에 기록.
+
+## TDD 스킬 (테스트 주도 개발)
+사용자가 "TDD", "red-green-refactor", "test-first"라고 하면:
+- 수평 슬라이스 금지 (모든 테스트 먼저 작성 X)
+- 수직 슬라이스 (tracer bullet): 하나의 테스트 → 하나의 구현 → 반복
+- 테스트는 public interface의 행위만 검증. 구현 세부사항 X
+- 리팩터링은 GREEN 상태에서만. 중복 추출, 모듈 심화, SOLID 적용
+
+## Caveman 모드 (초압축)
+사용자가 "caveman", "less tokens", "be brief"라고 하면:
+- 관사/충언/공손어 삭제. 단편 OK. 짧은 동의어 사용.
+- 기술 용어는 정확히 유지. 코드 블록 변경 없음.
+- 패턴: [thing] [action] [reason]. [next step].
+- 보안 경고/되돌릴 수 없는 작업/다단계 순서에서는 일시 중단 후 복귀.
+
+## Grill-Me 스킬 (설계 스트레스 테스트)
+사용자가 "grill me", "stress-test my plan"이라고 하면:
+- 계획의 모든 측면을 집요하게 질문. 의사결정 트리의 각 분기를 하나씩 해결.
+- 한 번에 하나의 질문. 코드베이스로 답할 수 있으면 탐색 대신 코드베이스 탐색.
+- 각 질문에 권장 답변 제공.
+
+## Handoff 스킬 (세션 전달)
+- 현재 대화를 다음 에이전트가 이어갈 수 있는 핸드오프 문서로 압축
+- OS 임시 디렉토리에 저장 (현재 워크스페이스 아님)
+- 이미 PRD/계획/ADR/이슈/커밋에 캡처된 내용은 중복 금지, 경로 참조
+- 민감 정보(API key, 비밀번호, PII) 삭제
+
+## Zoom-Out 스킬 (상위 추상화)
+- 코드 영역의 상위 추상화 맵 제공
+- 관련 모듈과 호출자 전체 맵. 프로젝트 도메인 용어 사용.

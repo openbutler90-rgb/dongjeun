@@ -1,0 +1,50 @@
+
+> react-example@0.0.0 build
+> vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs
+
+[36mvite v6.4.2 [32mbuilding for production...[36m[39m
+transforming...
+[32m??[39m 980 modules transformed.
+rendering chunks...
+[plugin vite:reporter] 
+(!) C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/firebase.ts is dynamically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/admin/AdminJoinRequests.tsx but also statically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/App.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/admin/AdminJoinRequests.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/admin/AdminMailSender.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/admin/AdminUsers.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/layout/Layout.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/layout/MailboxModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/layout/RightSidebar.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/AiAssistant.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/JoinRequestView.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/MeetingList.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/MeetingWriteModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/PostList.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/WritePostModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/webtoon/WebtoonList.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/webtoon/WebtoonProjectModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/dailyAiPublisher.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/louisTaskManager.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/notifications.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/webtoonAi.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/AdminPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/AuthPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/ChannelPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/HomePage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/MapPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/ProfilePage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/WebtoonDetailPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/stores/authStore.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/gemini/prompts.ts is dynamically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/gemini.ts but also statically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/gemini.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/placeTools.ts is dynamically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/gemini.ts but also statically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/AiAssistant.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/PostList.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/WritePostModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/dailyAiPublisher.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/louisTaskManager.ts, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/AdminPage.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/HomePage.tsx, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter] 
+(!) C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/lib/sound.ts is dynamically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/ProfilePage.tsx but also statically imported by C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/AiAssistant.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/components/posts/WritePostModal.tsx, C:/Users/dhvnf/Downloads/?숈쟾而ㅽ뵾/src/pages/AuthPage.tsx, dynamic import will not move module into another chunk.
+
+computing gzip size...
+[2mdist/[22m[32mindex.html                            [39m[1m[2m  3.24 kB[22m[1m[22m[2m ??gzip:   1.34 kB[22m
+[2mdist/[22m[35massets/index-DTrm6_lH.css             [39m[1m[2m132.69 kB[22m[1m[22m[2m ??gzip:  24.82 kB[22m
+[2mdist/[22m[36massets/MapPage-C-Iu7_xD.js            [39m[1m[2m  7.83 kB[22m[1m[22m[2m ??gzip:   3.23 kB[22m
+[2mdist/[22m[36massets/ui-vendor-SDj274lT.js          [39m[1m[2m 23.83 kB[22m[1m[22m[2m ??gzip:   6.85 kB[22m
+[2mdist/[22m[36massets/WebtoonDetailPage-Cq8d1LAS.js  [39m[1m[2m 31.35 kB[22m[1m[22m[2m ??gzip:   9.24 kB[22m
+[2mdist/[22m[36massets/AiAssistant-CjkNzst3.js        [39m[1m[2m 39.04 kB[22m[1m[22m[2m ??gzip:  12.40 kB[22m
+[2mdist/[22m[36massets/react-vendor-C0K6A0Hf.js       [39m[1m[2m 49.22 kB[22m[1m[22m[2m ??gzip:  17.30 kB[22m
+[2mdist/[22m[36massets/firebase-vendor-Cx_SUY2m.js    [39m[1m[33m620.29 kB[39m[22m[2m ??gzip: 146.35 kB[22m
+[2mdist/[22m[36massets/index-CnN8Dt01.js              [39m[1m[33m863.31 kB[39m[22m[2m ??gzip: 250.29 kB[22m
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[32m??built in 3.49s[39m
+??[WARNING] "import.meta" is not available with the "cjs" output format and will be empty [empty-import-meta]
+
+    src/lib/gemini/client.ts:130:25:
+      130 ??  const importMetaEnv = (import.meta as any).env;
+          ??                         ~~~~~~~~~~~
+
+  You need to set the output format to "esm" for "import.meta" to work correctly.
+
+1 warning
+
+  dist\server.cjs      115.3kb
+  dist\server.cjs.map  193.8kb
+
+Done in 10ms

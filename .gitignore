@@ -1,0 +1,28 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# 민감한 설정 파일
+firebase-applet-config.json
+.firebase/
+.netlify/
+HANDOVER/
+
+# 백업 파일
+*.bak
+*.bak-*
+*.bak_*
+
+# 임시/채팅 기록 파일
+chat_step_*.txt
+found_step_*.txt
+step_*.txt
+op_def_*.txt
+op_step_*.txt
+write_server_step_*.txt
+server_raw_step_*.txt

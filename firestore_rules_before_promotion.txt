@@ -1,0 +1,532 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 기본: 모두 거부
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { 
+      return request.auth != null && (
+        !exists(/databases/$(database)/documents/users/$(request.auth.uid)) || 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isBanned', false) == false
+      ); 
+    }
+
+    function isAdmin() { 
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') == 'admin'; 
+    }
+
+    function isManager() { 
+      return request.auth != null &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', 'user') in ['admin', 'manager']; 
+    }
+
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidDecorationStyle(value) {
+      return value in ['none', 'rose', 'mint', 'sky', 'violet', 'gold', 'aurora', 'rainbow'];
+    }
+
+    function isValidDecorations(data) {
+      return !data.keys().hasAny(['decorations']) ||
+             (
+               data.decorations is map &&
+               data.decorations.keys().hasOnly(['enabled', 'avatarFrame', 'nameStyle']) &&
+               (data.decorations.get('enabled', true) is bool) &&
+               isValidDecorationStyle(data.decorations.get('avatarFrame', 'none')) &&
+               isValidDecorationStyle(data.decorations.get('nameStyle', 'none'))
+             );
+    }
+
+    // ── 사용자 프로필 ──
+    function isValidUser(data) {
+      return data.keys().hasAll(['nickname', 'role', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 16 &&
+             data.nickname is string && data.nickname.size() > 0 && data.nickname.size() <= 30 &&
+             (data.get('email', '') is string) &&
+             data.role in ['guest', 'user', 'regionalLeader', 'manager', 'admin'] &&
+             (data.get('profileColor', '') is string) &&
+             (data.get('photoURL', '') is string) &&
+             (data.get('bio', '') is string) && data.get('bio', '').size() <= 500 &&
+             (data.get('status', 'offline') in ['online', 'offline']) &&
+             (data.get('isBanned', false) is bool) &&
+             (data.get('level', 1) is number) &&
+             (data.get('xp', 0) is number) &&
+             (data.get('partnerId', '') is string) &&
+             (data.get('isAnonymous', false) is bool) &&
+             isValidDecorations(data) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if request.auth != null;
+      allow list: if isSignedIn();
+      // 일반 이메일/구글 가입
+      allow create: if request.auth != null &&
+                    request.auth.uid == userId &&
+                    isValidUser(incoming()) &&
+                    (
+                      // ✅ 익명(게스트) 가입 — 이메일 없음
+                      (request.auth.token.get('firebase', {}).get('sign_in_provider', '') == 'anonymous' &&
+                       incoming().role == 'guest' &&
+                       incoming().get('email', '') == '' &&
+                       incoming().get('isAnonymous', false) == true) ||
+                      // ✅ 일반/구글 가입
+                      (incoming().get('email', '') == request.auth.token.email &&
+                       incoming().get('isAnonymous', false) == false &&
+                       (incoming().role == 'user' ||
+                        (incoming().role == 'admin' && request.auth.token.email == 'openbutler90@gmail.com')))
+                    );
+      allow update: if isSignedIn() && 
+                    isValidUser(incoming()) && 
+                    incoming().createdAt == existing().createdAt && 
+                    incoming().email == existing().email && 
+                    (
+                      // 본인이 자기 프로필 수정
+                      (request.auth.uid == userId && 
+                       incoming().role == existing().role && 
+                       incoming().get('isBanned', false) == existing().get('isBanned', false) && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['nickname', 'profileColor', 'photoURL', 'status', 'bio', 'xp', 'level', 'partnerId', 'decorations', 'updatedAt'])) ||
+                      // 관리자가 역할/정지 변경
+                      (isAdmin() && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['role', 'isBanned', 'level', 'xp', 'updatedAt'])) ||
+                      // 특정 이메일은 자신을 admin으로 설정 가능
+                      (request.auth.uid == userId && 
+                       incoming().role == 'admin' && 
+                       request.auth.token.email == 'openbutler90@gmail.com' && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['role', 'updatedAt']))
+                    );
+      allow delete: if isAdmin() && existing().get('role', 'user') != 'admin';
+    }
+
+    function isValidSticker(data) {
+      return data.keys().hasAll(['imageUrl', 'name', 'status', 'createdAt']) &&
+             data.keys().size() <= 10 &&
+             data.imageUrl is string &&
+             data.imageUrl.size() <= 1000 &&
+             data.name is string &&
+             data.name.size() > 0 &&
+             data.name.size() <= 40 &&
+             data.status in ['active', 'pending'] &&
+             (data.get('requestedBy', '') is string) &&
+             (data.get('requestedByName', '') is string) &&
+             data.get('requestedByName', '').size() <= 40 &&
+             (data.get('prompt', '') is string) &&
+             data.get('prompt', '').size() <= 300 &&
+             (data.get('approvedAt', data.createdAt) is timestamp) &&
+             data.createdAt is timestamp;
+    }
+
+    match /stickers/{stickerId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    isValidSticker(incoming()) &&
+                    (
+                      (isManager() && incoming().status == 'active' && incoming().imageUrl.size() > 0) ||
+                      (!isManager() &&
+                       incoming().status == 'pending' &&
+                       incoming().requestedBy == request.auth.uid)
+                    );
+      allow update: if isManager() && isValidSticker(incoming());
+      allow delete: if isManager();
+    }
+
+    // ── 게시물 ──
+    function isValidPost(data) {
+      return data.keys().hasAll(['channelId', 'authorId', 'title', 'content', 'likesCount', 'updatedAt']) &&
+             data.keys().size() <= 19 &&
+             data.channelId is string && data.channelId.size() > 0 && data.channelId.size() <= 50 &&
+             data.authorId is string && data.authorId.size() > 0 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.content is string && data.content.size() <= 5000 &&
+             (data.get('imageUrl', '') is string) &&
+             (!('imageUrls' in data) || (data.imageUrls is list && data.imageUrls.size() <= 5)) &&
+             (data.get('locationName', '') is string) &&
+             (data.get('region', '') is string) &&
+             (data.get('lat', 0) is number) &&
+             (data.get('lng', 0) is number) &&
+             (data.get('geohash', '') is string) &&
+             data.get('geohash', '').size() <= 12 &&
+             (data.get('geoPrefix', '') is string) &&
+             data.get('geoPrefix', '').size() <= 6 &&
+             (data.get('isAiGenerated', false) is bool) &&
+             (data.get('commentsCount', 0) is number) &&
+             data.likesCount is number &&
+             data.updatedAt is timestamp;
+    }
+
+    match /posts/{postId} {
+      // ✅ list: 문의채널 제외 없음 → 모든 로그인 사용자 읽기 가능 (UI레벨 필터링)
+      // 참고: list룰에서 resource.data 사용하면 Firestore 쿼리시 오류 발생
+      allow list: if isSignedIn();
+      allow get: if isSignedIn() &&
+                 (resource.data.channelId != 'inquiries' ||
+                  isManager() ||
+                  resource.data.authorId == request.auth.uid);
+      
+      // ✅ 게시물 생성 - 로그인된 사용자 모두 가능 (공지는 관리자/부방장만)
+      allow create: if isSignedIn() && 
+                    isValidPost(incoming()) && 
+                    incoming().keys().hasAll(['createdAt']) &&
+                    incoming().createdAt is timestamp &&
+                    (incoming().authorId == request.auth.uid ||
+                     (isManager() &&
+                      incoming().authorId == 'ai-butler' &&
+                      incoming().get('isAiGenerated', false) == true)) &&
+                    incoming().likesCount == 0 &&
+                    incoming().get('commentsCount', 0) == 0 &&
+                    (incoming().channelId != 'notice' || isManager());
+                    
+      // ✅ 게시물 수정
+      allow update: if isSignedIn() && 
+                    isValidPost(incoming()) && 
+                    incoming().createdAt == existing().createdAt && 
+                    incoming().authorId == existing().authorId &&
+                    (
+                      isAdmin() ||
+                      // 작성자가 내용 수정
+                      (request.auth.uid == existing().authorId && 
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'imageUrl', 'imageUrls', 'locationName', 'region', 'lat', 'lng', 'geohash', 'geoPrefix', 'mapUrl', 'sourceLinks', 'updatedAt'])) ||
+                      // 문의/신고 답변 카운트는 작성자 또는 운영진만 변경
+                      (existing().channelId == 'inquiries' &&
+                       (request.auth.uid == existing().authorId || isManager()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount', 'updatedAt'])) ||
+                      // 좋아요 카운트만 변경
+                      (existing().channelId != 'inquiries' &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'updatedAt']))
+                    );
+
+      // 작성자 또는 관리자/부방장이 삭제
+      allow delete: if isSignedIn() && 
+                    (request.auth.uid == resource.data.authorId || isManager());
+
+      // ── 댓글 ──
+      function isValidComment(data) {
+        return data.keys().hasAll(['postId', 'authorId', 'content', 'createdAt']) &&
+               data.keys().size() <= 8 &&
+               data.postId is string && data.postId.size() > 0 &&
+               data.authorId is string &&
+               data.content is string && data.content.size() > 0 && data.content.size() <= 500 &&
+               (data.get('parentId', '') is string) &&
+               (data.get('updatedAt', data.createdAt) is timestamp) &&
+               (data.get('isAi', false) is bool) &&
+               (data.get('nickname', '') is string) &&
+               data.createdAt is timestamp;
+      }
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn() &&
+                    (get(/databases/$(database)/documents/posts/$(postId)).data.channelId != 'inquiries' ||
+                     isManager() ||
+                     get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid);
+        allow create: if isSignedIn() && 
+                      isValidComment(incoming()) && 
+                      (incoming().authorId == request.auth.uid || 
+                       (incoming().authorId == 'ai-butler' && incoming().get('isAi', false) == true)) &&
+                      incoming().postId == postId &&
+                      (get(/databases/$(database)/documents/posts/$(postId)).data.channelId != 'inquiries' ||
+                       isManager() ||
+                       get(/databases/$(database)/documents/posts/$(postId)).data.authorId == request.auth.uid);
+        allow update: if isSignedIn() && 
+                      isValidComment(incoming()) && 
+                      incoming().authorId == existing().authorId &&
+                      request.auth.uid == existing().authorId && 
+                      incoming().diff(existing()).affectedKeys().hasOnly(['content', 'updatedAt']);
+        allow delete: if isSignedIn() && 
+                      (request.auth.uid == resource.data.authorId || isManager());
+      }
+
+      // ── 웹툰 에피소드 ──
+      match /episodes/{episodeId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+                      request.resource.data.keys().hasAll(['episodeNumber', 'title', 'cuts', 'createdAt']) &&
+                      request.resource.data.episodeNumber is number &&
+                      request.resource.data.title is string &&
+                      request.resource.data.cuts is list &&
+                      request.resource.data.createdAt is timestamp;
+        allow update: if isSignedIn() &&
+                      (request.auth.uid == get(/databases/$(database)/documents/posts/$(postId)).data.authorId || isManager());
+        allow delete: if isSignedIn() &&
+                      (request.auth.uid == get(/databases/$(database)/documents/posts/$(postId)).data.authorId || isManager());
+      }
+
+      // ── 좋아요 ──
+      match /likes/{userId} {
+        allow read: if isSignedIn() &&
+                    get(/databases/$(database)/documents/posts/$(postId)).data.channelId != 'inquiries';
+        allow create: if isSignedIn() && 
+                      get(/databases/$(database)/documents/posts/$(postId)).data.channelId != 'inquiries' &&
+                      request.auth.uid == userId && 
+                      request.resource.data.keys().hasAll(['userId', 'createdAt']) &&
+                      request.resource.data.keys().size() == 2 &&
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.createdAt is timestamp;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // ── 채팅 ──
+    function isValidChat(data) {
+      return data.keys().hasAll(['authorId', 'nickname', 'content', 'createdAt']) &&
+             data.keys().size() <= 9 &&
+             data.authorId is string &&
+             data.nickname is string &&
+             data.content is string && data.content.size() > 0 && data.content.size() <= 1000 &&
+             (data.get('replyToId', '') is string) &&
+             (data.get('replyToAuthorId', '') is string) &&
+             (data.get('replyToNickname', '') is string) &&
+             (data.get('replyToContent', '') is string) &&
+             data.get('replyToContent', '').size() <= 120 &&
+             (data.get('stickerUrl', '') is string) &&
+             data.get('stickerUrl', '').size() <= 1000 &&
+             (data.get('stickerName', '') is string) &&
+             data.get('stickerName', '').size() <= 40 &&
+             data.createdAt is timestamp;
+    }
+
+    match /chats/{chatId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && 
+                    isValidChat(incoming()) && 
+                    (incoming().authorId == request.auth.uid || 
+                     (incoming().authorId == 'ai-butler' && incoming().nickname == 'AI 집사🤵')) && 
+                    incoming().createdAt is timestamp;
+      allow delete: if isSignedIn() && 
+                    (request.auth.uid == existing().authorId || isManager());
+    }
+
+    match /aiUsage/{usageId} {
+      allow get: if isSignedIn() &&
+                 (resource.data.userId == request.auth.uid || isManager());
+      allow list: if isManager();
+      allow create, update: if isSignedIn() &&
+                            request.resource.data.keys().hasOnly(['userId', 'date', 'count', 'updatedAt']) &&
+                            request.resource.data.userId == request.auth.uid &&
+                            request.resource.data.date is string &&
+                            request.resource.data.count is number &&
+                            request.resource.data.count >= 1 &&
+                            request.resource.data.count <= 9 &&
+                            request.resource.data.updatedAt is timestamp;
+      allow delete: if isManager();
+    }
+
+    match /aiSessions/{userId} {
+      allow read, delete: if isSignedIn() && request.auth.uid == userId;
+      allow create, update: if isSignedIn() &&
+                            request.auth.uid == userId &&
+                            request.resource.data.keys().hasOnly(['userId', 'messages', 'updatedAt']) &&
+                            request.resource.data.userId == request.auth.uid &&
+                            request.resource.data.messages is list &&
+                            request.resource.data.messages.size() <= 80 &&
+                            request.resource.data.updatedAt is timestamp;
+    }
+
+    // 운영 설정
+    match /dailyAiRuns/{runId} {
+      allow read: if isManager();
+      allow create, update: if isManager() &&
+                            request.resource.data.keys().hasOnly(['date', 'channelId', 'status', 'postId', 'error', 'createdAt', 'updatedAt']) &&
+                            request.resource.data.date is string &&
+                            request.resource.data.channelId in ['freeboard', 'restaurants', 'accommodation', 'hotplace', 'ootd', 'counseling'] &&
+                            request.resource.data.status in ['running', 'done', 'error'] &&
+                            request.resource.data.get('postId', '') is string &&
+                            request.resource.data.get('error', '') is string &&
+                            request.resource.data.updatedAt is timestamp &&
+                            request.resource.data.get('createdAt', request.resource.data.updatedAt) is timestamp;
+      allow delete: if isAdmin();
+    }
+
+    match /appConfig/{configId} {
+      allow get: if configId == 'public' || isManager();
+      allow list: if isManager();
+      allow create, update: if isManager() &&
+                            configId == 'public' &&
+                            request.resource.data.updatedAt is timestamp &&
+                            request.resource.data.updatedBy == request.auth.uid &&
+                            // optional validation for known fields
+                            ( !('inviteCode' in request.resource.data) || (request.resource.data.inviteCode is string && request.resource.data.inviteCode.size() >= 4 && request.resource.data.inviteCode.size() <= 40) ) &&
+                            ( !('inviteHint' in request.resource.data) || (request.resource.data.inviteHint is string && request.resource.data.inviteHint.size() <= 80) ) &&
+                            ( !('operationOptions' in request.resource.data) || (request.resource.data.operationOptions is map) ) &&
+                            ( !( 'joinQuestions' in request.resource.data ) || request.resource.data.joinQuestions is list );
+      allow delete: if false;
+    }
+
+    // ✅ 배너 - 관리자/부방장만 쓰기, 로그인 사용자 읽기
+    match /banners/{bannerId} {
+      allow read: if request.auth != null;
+      allow create: if isManager() && 
+                    request.resource.data.keys().hasAll(['title', 'subtitle', 'imageUrl', 'createdAt']) &&
+                    request.resource.data.title is string &&
+                    request.resource.data.subtitle is string &&
+                    request.resource.data.imageUrl is string &&
+                    request.resource.data.createdAt is timestamp &&
+                    request.resource.data.keys().size() <= 60;
+      allow update: if isManager();
+      allow delete: if isManager();
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['userId', 'type', 'actorId', 'actorName', 'message', 'read', 'createdAt']) &&
+             data.keys().size() <= 11 &&
+             data.userId is string &&
+             data.type in ['like', 'comment', 'reply', 'system', 'louis_complete', 'louis_failed', 'louis_cancelled'] &&
+             data.actorId is string &&
+             data.actorName is string &&
+             data.actorName.size() <= 40 &&
+             (data.get('postId', '') is string) &&
+             (data.get('postTitle', '') is string) &&
+             data.get('postTitle', '').size() <= 120 &&
+             (data.get('channelId', '') is string) &&
+             data.message is string &&
+             data.message.size() > 0 &&
+             data.message.size() <= 200 &&
+             data.read is bool &&
+             data.createdAt is timestamp;
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn() &&
+                    isValidNotification(incoming()) &&
+                    incoming().actorId == request.auth.uid &&
+                    (incoming().userId != request.auth.uid ||
+                     (incoming().userId == request.auth.uid && incoming().type in ['system', 'louis_complete', 'louis_failed', 'louis_cancelled'])) &&
+                    incoming().read == false;
+      allow update: if isSignedIn() &&
+                    existing().userId == request.auth.uid &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+                    incoming().read is bool;
+      allow delete: if (isSignedIn() && existing().userId == request.auth.uid) || isAdmin();
+    }
+
+    // ✅ 모임 (meetings)
+    function isValidMeeting(data) {
+      return data.keys().hasAll(['channelId', 'authorId', 'title', 'content', 'meetingType', 'meetingDate', 'registrationDeadline', 'updatedAt']) &&
+             data.keys().size() <= 22 &&
+             data.channelId == 'meetings' &&
+             data.authorId is string &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.content is string && data.content.size() <= 2000 &&
+             data.meetingType in ['regular', 'regional', 'small'] &&
+             data.meetingDate is timestamp &&
+             data.registrationDeadline is timestamp &&
+             (data.get('maxAttendees', 0) is number) &&
+             (data.get('locationName', '') is string) &&
+             (data.get('lat', 0) is number) &&
+             (data.get('lng', 0) is number) &&
+             (data.get('geohash', '') is string) &&
+             data.get('geohash', '').size() <= 12 &&
+             (data.get('geoPrefix', '') is string) &&
+             data.get('geoPrefix', '').size() <= 6 &&
+             (data.get('locationPrivate', true) is bool) &&
+             (data.get('totalCost', 0) is number) &&
+             (data.get('attendeesCount', 0) is number) &&
+             (data.get('isActive', true) is bool) &&
+             (!('imageUrls' in data) || data.imageUrls is list) &&
+             data.updatedAt is timestamp;
+    }
+
+    match /meetings/{meetingId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                    isValidMeeting(incoming()) &&
+                    incoming().keys().hasAll(['createdAt']) &&
+                    incoming().createdAt is timestamp &&
+                    incoming().authorId == request.auth.uid &&
+                    incoming().get('attendeesCount', 0) == 0 &&
+                    incoming().get('totalCost', 0) == 0;
+      allow update: if isSignedIn() && (
+                    isAdmin() ||
+                    // 모임장 수정
+                    (request.auth.uid == existing().authorId) ||
+                    // 일반 - attendeesCount, totalCost만 변경
+                    (incoming().diff(existing()).affectedKeys().hasOnly(['attendeesCount', 'totalCost', 'updatedAt']))
+                  );
+      allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isManager());
+
+      // 모임 참석자
+      match /attendees/{userId} {
+        allow read: if isSignedIn();
+        // 본인 참석
+        allow create: if isSignedIn() && request.auth.uid == userId &&
+                      request.resource.data.keys().hasAll(['userId', 'nickname', 'joinedAt', 'isPaid']) &&
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.joinedAt is timestamp &&
+                      request.resource.data.isPaid is bool;
+        // 결제 표시, 운영진 설정
+        allow update: if isSignedIn() && (
+                      request.auth.uid == userId ||
+                      isManager() ||
+                      get(/databases/$(database)/documents/meetings/$(meetingId)).data.authorId == request.auth.uid
+                    );
+        allow delete: if isSignedIn() && (request.auth.uid == userId || isManager());
+      }
+
+      // 모임 댓글
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() &&
+                      request.resource.data.keys().hasAll(['authorId', 'nickname', 'content', 'createdAt', 'postId']) &&
+                      request.resource.data.authorId == request.auth.uid &&
+                      request.resource.data.content is string &&
+                      request.resource.data.content.size() > 0 &&
+                      request.resource.data.content.size() <= 500 &&
+                      request.resource.data.createdAt is timestamp;
+        allow update: if isSignedIn() && request.auth.uid == existing().authorId;
+        allow delete: if isSignedIn() && (request.auth.uid == existing().authorId || isManager());
+      }
+    }
+
+    // ── 가입신청 (joinRequests) ──
+    match /joinRequests/{requestId} {
+      // 관리자/부방장은 전체 조회, 본인은 자기 신청만
+      allow read: if isManager() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow list: if isManager();
+      // 게스트 또는 일반 유저가 신청서 제출
+      allow create: if request.auth != null &&
+                    request.auth.uid == request.resource.data.userId &&
+                    request.resource.data.keys().hasAll(['userId', 'nickname', 'answers', 'status', 'createdAt']) &&
+                    request.resource.data.answers is list &&
+                    request.resource.data.status == 'pending' &&
+                    request.resource.data.createdAt is timestamp;
+      // 관리자만 상태 변경(승인/거절)
+      allow update: if isManager() &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status', 'approvedAt', 'rejectedAt', 'rejectReason', 'approvedBy', 'onboardingMsg', 'updatedAt']);
+      allow delete: if isAdmin();
+    }
+
+    // ── 편지함 (letters) ──
+    match /letters/{letterId} {
+      // 받은 사람 본인만 읽기 가능
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      // 운영자만 편지 발송
+      allow create: if (
+                      (isManager() &&
+                        request.resource.data.keys().hasAll(['userId', 'title', 'content', 'read', 'createdAt', 'senderId']) &&
+                        request.resource.data.read == false &&
+                        request.resource.data.senderId == request.auth.uid &&
+                        request.resource.data.createdAt is timestamp)
+                      ||
+                      (isSignedIn() &&
+                        request.resource.data.keys().hasAll(['userId', 'title', 'content', 'read', 'createdAt', 'senderId']) &&
+                        request.resource.data.read == false &&
+                        request.resource.data.userId == request.auth.uid &&
+                        request.resource.data.senderId == request.auth.uid &&
+                        request.resource.data.createdAt is timestamp)
+                    );
+      // 받은 사람이 읽음 처리만 가능
+      allow update: if isSignedIn() &&
+                    existing().userId == request.auth.uid &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['read']) &&
+                    incoming().read == true;
+      allow delete: if isAdmin();
+    }
+  }
+}

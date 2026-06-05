@@ -1,0 +1,10 @@
+{
+  "name": "동전커피",
+  "description": "동전커피 - 모임, 맛집, 장소 정보를 나누는 커뮤니티 앱",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

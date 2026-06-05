@@ -1,0 +1,317 @@
+import { useEffect, useState, lazy, Suspense } from 'react';
+import { useNavigate, useParams } from 'react-router';
+import { doc, getDoc } from 'firebase/firestore';
+import { PostList } from '../components/posts/PostList';
+import { RightSidebar } from '../components/layout/RightSidebar';
+import { WritePostModal } from '../components/posts/WritePostModal';
+import { MeetingList } from '../components/posts/MeetingList';
+import { MeetingWriteModal } from '../components/posts/MeetingWriteModal';
+import { useAuthStore } from '../stores/authStore';
+import { db } from '../lib/firebase';
+import { WebtoonList } from '../components/webtoon/WebtoonList';
+import { WebtoonProjectModal } from '../components/webtoon/WebtoonProjectModal';
+import { JoinRequestView } from '../components/posts/JoinRequestView';
+import { OperatorErrorBoundary } from '../components/common/OperatorErrorBoundary';
+
+// ✅ AI 루이는 AI 채널 접속 시에만 로드 (chunk 로딩 실패 시 자동 새로고침)
+const AiAssistant = lazy(() =>
+  import('../components/posts/AiAssistant').then(m => ({ default: m.AiAssistant })).catch(err => {
+    console.error('AiAssistant chunk load failed:', err);
+    // chunk 로딩 실패 (주로 배포 후 오래된 index.html 캐시): 새로고침 유도
+    return { default: () => (
+      <div className="flex flex-col items-center justify-center h-full text-center px-6">
+        <span className="text-6xl mb-4">🔄</span>
+        <h2 className="text-xl font-black text-slate-800 mb-2">화면을 새로고침해주세요</h2>
+        <p className="text-sm text-slate-500 leading-relaxed max-w-xs mb-4">
+          앱 업데이트 후 일시적인 오류예요.<br />아래 버튼을 누르면 바로 복구됩니다.
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="px-5 py-2.5 bg-rose-500 text-white font-bold rounded-full hover:bg-rose-600 transition-colors"
+        >
+          새로고침
+        </button>
+      </div>
+    )};
+  })
+);
+
+const CHANNELS: Record<string, { name: string; icon: string; description?: string }> = {
+  meetings:      { name: '모임 일정',             icon: '🤝', description: '소모임 · 지역모임 · 동호회를 만들고 참석해보세요.' },
+  meeting_board: { name: '모임 사진',             icon: '📷', description: '모임 후기나 사진을 공유하는 곳입니다.' },
+  notice:        { name: '공지사항',          icon: '📌' },
+  freeboard:     { name: '자유게시판',         icon: '💬' },
+  ootd:          { name: '패션 / OOTD',       icon: '👗' },
+  counseling:    { name: '생활 꿀팁·고민',    icon: '💡' },
+  inquiries:     { name: '문의·신고',         icon: '🛟', description: '작성한 문의는 본인과 운영진에게만 보입니다. 목록과 댓글에서도 닉네임은 공개하지 않습니다.' },
+  ai:            { name: 'AI 루이',           icon: '/ai-butler.png?v=20260518', description: '루이와 대화하며 장소와 맛집 정보를 블로그형으로 받아보세요.' },
+  webtoon:       { name: '브로맨툰',        icon: '📖', description: '매일 자동으로 연재되는 AI 릴레이 웹툰을 감상하고, 나만의 세계관을 창조해보세요!' },
+  hotplace:      { name: '요즘 핫플레이스',   icon: '📍', description: '지역에서 가장 핫한 장소를 공유해요!' },
+  restaurants:   { name: '맛집 추천 공유',    icon: '🍽', description: '후회 없는 찐 맛집을 모아요.' },
+  spots:         { name: '인생샷 스팟',        icon: '📸', description: '사진 바꾸기 좋은 포토스팟' },
+  accommodation: { name: '숙소 리뷰',         icon: '🏨', description: '직접 가본 솔직한 숙소 리뷰' },
+  join_request:  { name: '가입신청',             icon: '📝', description: '동전커피 모임 가입을 신청하는 공간입니다. 가입신청서 작성 후 승인이 완료되면 모든 서비스를 이용할 수 있습니다.' },
+  first_greeting: { name: '첫 인사',             icon: '🌱', description: '가입이 완료된 회원들이 첫 인사를 나누는 공간입니다.' },
+};
+
+function ChannelIcon({ icon, name }: { icon: string; name: string }) {
+  if (icon.startsWith('/')) {
+    return <img src={icon} alt={name} className="w-8 h-8 rounded-full object-cover border border-indigo-100 bg-indigo-50 mr-2" />;
+  }
+  return <span className="text-2xl mr-2">{icon}</span>;
+}
+
+const ROLE_RANK: Record<string, number> = {
+  user: 1,
+  regionalLeader: 2,
+  manager: 3,
+  admin: 4,
+};
+
+const DEFAULT_WRITE_PERMISSIONS = {
+  notice: 'manager',
+  meetings: 'user',
+  posts: 'user',
+  inquiries: 'user',
+};
+
+export function ChannelPage() {
+  const { channelId } = useParams();
+  const navigate = useNavigate();
+  const { profile } = useAuthStore();
+  const channelInfo = channelId ? CHANNELS[channelId] : null;
+  const [isWriteModalOpen, setIsWriteModalOpen] = useState(false);
+  const [headerSearch, setHeaderSearch] = useState('');
+  const [writePermissions, setWritePermissions] = useState(DEFAULT_WRITE_PERMISSIONS);
+  // ✅ 게시물 저장 후 PostList 즉시 갱신용
+  const [postRefreshKey, setPostRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDoc(doc(db, 'appConfig', 'public')).then((snap) => {
+      const permissions = snap.data()?.operationOptions?.permissions;
+      if (!cancelled && permissions && typeof permissions === 'object') {
+        setWritePermissions({ ...DEFAULT_WRITE_PERMISSIONS, ...permissions });
+      }
+    }).catch((err) => console.warn('Failed to load write permissions:', err));
+    return () => { cancelled = true; };
+  }, []);
+
+  if (!channelInfo) return <div>Channel not found</div>;
+
+  const isMeetingsChannel = channelId === 'meetings';
+  const isMeetingArea = channelId === 'meetings' || channelId === 'meeting_board';
+  const role = profile?.role || 'user';
+  const isGuest = profile?.role === 'guest';
+  const isGuestBlockedChannel = isGuest && (channelId === 'ai' || isMeetingArea || channelId === 'first_greeting');
+
+  if (isGuestBlockedChannel) {
+    return (
+      <div className="flex-1 flex flex-col h-full bg-slate-50 items-center justify-center">
+        <div className="bg-white rounded-3xl p-8 border border-slate-100 shadow-xl max-w-md w-full text-center space-y-4">
+          <span className="text-6xl block">{channelId === 'ai' ? '🤖' : '🔒'}</span>
+          <h2 className="text-xl font-black text-slate-800">정회원 전용 공간</h2>
+          <p className="text-sm text-slate-500 leading-relaxed">
+            가입 승인 안내를 받은 뒤 정식 회원가입으로 로그인해야 이용할 수 있습니다.
+          </p>
+          <button
+            onClick={() => navigate('/channels/join_request')}
+            className="w-full py-3 bg-gradient-to-r from-rose-500 to-orange-400 text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+          >
+            📝 가입신청 확인하기
+          </button>
+        </div>
+      </div>
+    );
+  }
+  const requiredRole = channelId === 'notice'
+    ? writePermissions.notice
+    : channelId === 'meetings'
+      ? writePermissions.meetings
+      : channelId === 'inquiries'
+        ? writePermissions.inquiries
+        : writePermissions.posts;
+  const isWebtoonChannel = channelId === 'webtoon';
+  const isOperator = profile?.role === 'admin' || profile?.role === 'manager';
+
+  // 가입신청: 게스트만 쓸 수 있음, webtoon: 운영자만, 나머지: 권한에 따름
+  const canWrite = channelId === 'join_request'
+    ? isGuest
+    : channelId !== 'ai' && !isWebtoonChannel
+      ? (ROLE_RANK[role] || 0) >= (ROLE_RANK[requiredRole] || 1)
+      : isWebtoonChannel
+        ? isOperator
+        : false;
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-slate-50 relative">
+      <header className="h-16 border-b border-slate-200 bg-white flex items-center justify-between px-6 shrink-0">
+        <div className="flex items-center">
+          <ChannelIcon icon={channelInfo.icon} name={channelInfo.name} />
+          <h2 className="font-bold text-xl">{channelInfo.name}</h2>
+        </div>
+
+        {/* 데스크탑 헤더 버튼 */}
+        <div className="hidden md:flex space-x-3 items-center">
+          {canWrite && channelId !== 'join_request' && (
+            <button
+              onClick={() => setIsWriteModalOpen(true)}
+              className="munto-gradient text-white px-4 py-2 rounded-full text-xs font-bold shadow-sm hover:shadow-md transition-all flex items-center gap-1.5"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+              {isMeetingsChannel ? '모임 만들기' : channelId === 'first_greeting' ? '첫인사하기' : '글 작성하기'}
+            </button>
+          )}
+          {channelId !== 'ai' && !isMeetingsChannel && (
+            <div className="relative">
+              <input
+                type="text"
+                value={headerSearch}
+                onChange={e => setHeaderSearch(e.target.value)}
+                placeholder="게시글 검색..."
+                className="bg-slate-100 border-none rounded-full px-4 py-2 text-sm w-48 focus:ring-2 focus:ring-rose-400 focus:outline-none"
+              />
+              {headerSearch ? (
+                <button
+                  onClick={() => setHeaderSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >✕</button>
+              ) : (
+                <svg className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 모바일 헤더 버튼 */}
+        <div className="md:hidden flex items-center gap-2">
+          {canWrite && channelId !== 'join_request' && (
+            <button
+              onClick={() => setIsWriteModalOpen(true)}
+              className="munto-gradient text-white p-2 rounded-full shadow-md"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          )}
+          {channelId !== 'ai' && !isMeetingsChannel && (
+            <div className="relative">
+              <input
+                type="text"
+                value={headerSearch}
+                onChange={e => setHeaderSearch(e.target.value)}
+                placeholder="검색..."
+                className="bg-slate-100 border-none rounded-full px-3 py-1.5 text-xs w-24 focus:ring-2 focus:ring-rose-400 focus:outline-none"
+              />
+            </div>
+          )}
+        </div>
+      </header>
+
+      <main className="flex-1 flex overflow-hidden relative">
+        <div className={`${channelId === 'ai' ? 'w-full p-3 md:p-4' : 'w-full p-4 md:p-5'} overflow-y-auto custom-scrollbar`}>
+          {channelInfo.description && channelId !== 'ai' && (
+            <div className="mb-4 bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex items-center">
+              <span className="text-xl mr-2">ℹ️</span>
+              <p className="text-sm md:text-base text-slate-600 font-medium">{channelInfo.description}</p>
+            </div>
+          )}
+
+          {/* 게스트 AI 루이 오버레이 */}
+          {channelId === 'ai' && isGuest && (
+            <div className="absolute inset-0 bg-slate-200 flex items-center justify-center" style={{ filter: 'blur(4px)', transform: 'scale(1.05)', zIndex: 10 }}>
+              <div className="w-full h-full bg-gradient-to-br from-purple-100 via-pink-50 to-purple-200 opacity-80" />
+            </div>
+          )}
+
+          {/* 게스트 데이트코스/모임 오버레이 */}
+          {isMeetingsChannel && isGuest && (
+            <div className="absolute inset-0 bg-slate-200 flex items-center justify-center" style={{ filter: 'blur(3px)', zIndex: 10 }}>
+              <div className="w-full h-full bg-gradient-to-br from-cyan-100 via-blue-50 to-cyan-200 opacity-80" />
+            </div>
+          )}
+
+          {channelId === 'ai' ? (
+            <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-4 border-rose-200 border-t-rose-500 rounded-full animate-spin" /></div>}>
+              <OperatorErrorBoundary title="집사방(AI 루이) 오류">
+                <AiAssistant />
+              </OperatorErrorBoundary>
+            </Suspense>
+          ) : isMeetingsChannel ? (
+            <MeetingList />
+          ) : channelId === 'webtoon' ? (
+            isOperator ? (
+              <WebtoonList channelId={channelId!} />
+            ) : (
+              <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <span className="text-6xl mb-4">🚧</span>
+                <h2 className="text-xl font-black text-slate-800 mb-2">브로맨툰 준비 중</h2>
+                <p className="text-sm text-slate-500 leading-relaxed max-w-xs">
+                  AI 릴레이 웹툰 기능을 열심히 준비하고 있어요.<br />
+                  곧 멋진 작품으로 찾아뵐게요!
+                </p>
+              </div>
+            )
+          ) : channelId === 'join_request' ? (
+            <JoinRequestView />
+          ) : (
+            <PostList channelId={channelId!} externalSearch={headerSearch} refreshKey={postRefreshKey} />
+          )}
+        </div>
+
+        {/* 게스트 오버레이 메시지 */}
+        {isGuest && (channelId === 'ai' || isMeetingsChannel) && (
+          <div className="absolute inset-0 flex items-center justify-center z-20">
+            <div className="bg-white/95 backdrop-blur-md border border-slate-200 rounded-2xl p-8 shadow-2xl text-center max-w-sm">
+              <span className="text-6xl block mb-4">{channelId === 'ai' ? '🤖' : '🤝'}</span>
+              <h3 className="text-xl font-black text-slate-800 mb-2">
+                {channelId === 'ai' ? 'AI 루이 - 정회원 전용' : '데이트코스 - 정회원 전용'}
+              </h3>
+              <p className="text-sm text-slate-600 mb-6 leading-relaxed">
+                {channelId === 'ai' 
+                  ? 'AI 루이와의 상담은 가입 승인 후 이용 가능합니다.'
+                  : '모임 일정과 사진은 가입 승인 후 열람 가능합니다.'}
+              </p>
+              <button
+                onClick={() => navigate('/channels/join_request')}
+                className="w-full py-3 bg-gradient-to-r from-rose-500 to-orange-400 text-white font-bold rounded-xl hover:opacity-90 transition-opacity"
+              >
+                📝 가입신청 진행하기
+              </button>
+            </div>
+          </div>
+        )}
+
+        {channelId !== 'ai' && !isGuest && (
+          <>
+            <div className="hidden xl:block w-80 shrink-0 border-l border-slate-200 bg-white h-full">
+              <RightSidebar />
+            </div>
+            <div className="xl:hidden">
+              <RightSidebar isMobile />
+            </div>
+          </>
+        )}
+      </main>
+
+      {isWriteModalOpen && (
+        isMeetingsChannel ? (
+          <MeetingWriteModal onClose={() => setIsWriteModalOpen(false)} onSaved={() => setPostRefreshKey(k => k + 1)} />
+        ) : channelId === 'webtoon' ? (
+          <WebtoonProjectModal onClose={() => setIsWriteModalOpen(false)} />
+        ) : (
+          <WritePostModal
+            channelId={channelId!}
+            onClose={() => setIsWriteModalOpen(false)}
+            onSaved={() => setPostRefreshKey(k => k + 1)}
+          />
+        )
+      )}
+    </div>
+  );
+}

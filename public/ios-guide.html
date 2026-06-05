@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>동전커피 - iOS 사용 가이드</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f8f9fa; color: #1a1a1a; line-height: 1.6; padding: 20px; }
+    .container { max-width: 400px; margin: 0 auto; }
+    .logo { text-align: center; margin-bottom: 24px; }
+    .logo img { width: 80px; height: 80px; border-radius: 20px; }
+    .logo h1 { font-size: 20px; margin-top: 8px; }
+    .card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .card h2 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .step { display: flex; gap: 12px; margin-bottom: 14px; }
+    .step-num { width: 28px; height: 28px; background: #FF5C5C; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; flex-shrink: 0; }
+    .step-text { font-size: 14px; padding-top: 3px; }
+    .step-text strong { color: #FF5C5C; }
+    .warning { background: #fff8f0; border: 1px solid #ffd4a8; border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+    .warning h3 { font-size: 14px; color: #e67e22; margin-bottom: 8px; }
+    .warning p { font-size: 13px; color: #666; }
+    .tip { background: #f0f7ff; border: 1px solid #b3d9ff; border-radius: 12px; padding: 16px; }
+    .tip h3 { font-size: 14px; color: #2980b9; margin-bottom: 8px; }
+    .tip p { font-size: 13px; color: #555; }
+    .btn { display: block; width: 100%; background: #FF5C5C; color: white; text-align: center; padding: 14px; border-radius: 12px; text-decoration: none; font-size: 15px; font-weight: bold; margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <img src="/app-icon-192.png" alt="동전커피">
+      <h1>동전커피 iOS 가이드</h1>
+    </div>
+
+    <div class="warning">
+      <h3>⚠️ 꼭 확인해주세요</h3>
+      <p>카카오톡 안에서 링크를 누르면 일부 기능이 제한될 수 있습니다. 반드시 <strong>Safari</strong>에서 열어주세요.</p>
+    </div>
+
+    <div class="card">
+      <h2>📱 Safari에서 여는 방법</h2>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">카카오톡에서 링크를 누른다</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">우측 상단 <strong>점 3개(⋯)</strong> 누른다</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>"Safari에서 열기"</strong> 선택</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🏠 앱처럼 설치하기 (PWA)</h2>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">Safari에서 <strong>동전커피</strong> 접속</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">하단 <strong>공유 버튼(□↑)</strong> 누른다</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text"><strong>"홈 화면에 추가"</strong> 선택</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">홈 화면의 아이콘으로 앱처럼 사용!</div>
+      </div>
+    </div>
+
+    <div class="tip">
+      <h3>💡 참고사항</h3>
+      <p>• iOS에서는 <strong>푸시 알림(배지)</strong>이 지원되지 않습니다<br>
+      • 새로운 소식은 앱을 켰을 때 확인할 수 있어요<br>
+      • Safari 외 Chrome/Edge도 가능하지만 Safari가 가장 원활해요</p>
+    </div>
+
+    <a href="/" class="btn">동전커피 바로가기</a>
+  </div>
+</body>
+</html>
